@@ -65,8 +65,9 @@ def test_unknown_and_missing_material_fail_closed():
 
 
 def test_invalid_spoolman_target_rejected():
+    # 0 is Spoolman's "not set" (see tests/test_material_hardening.py); a negative or absurd value is invalid.
     with pytest.raises(ValueError, match="Invalid nozzle temperature"):
-        printer_state.resolve_material_temperatures("PLA", {"settings_extruder_temp": 0}, config={})
+        printer_state.resolve_material_temperatures("PLA", {"settings_extruder_temp": -1}, config={})
 
 
 @pytest.mark.parametrize("material, family, variant, nozzle", [
@@ -86,7 +87,7 @@ def test_finish_words_resolve_to_the_family_with_its_variant_temperature(materia
     assert printer_state.material_variant(material) == variant
 
 
-@pytest.mark.parametrize("material", ["PLA/PHA", "PLA Glow", "NoPLA+", "Wood", "High Speed PLA", "PETG HF"])
+@pytest.mark.parametrize("material", ["PLA/PHA", "NoPLA+", "Wood", "High Speed PLA", "PETG HF"])
 def test_blends_abrasives_and_unknown_names_stay_refused(material):
     with pytest.raises(ValueError, match="Unsupported filament material"):
         printer_state.resolve_material_temperatures(material, {}, {"material_temps": {}})

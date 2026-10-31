@@ -38,7 +38,6 @@ NOZZLE_TYPE_ALIASES: dict[str, str] = {
     "stainless": "stainless_steel",
     "stainless_steel": "stainless_steel",
     "stainless steel": "stainless_steel",
-    "stock": "stainless_steel",
     "ruby": "ruby",
     "ruby_tipped": "ruby",
     "ruby tipped": "ruby",
@@ -52,16 +51,24 @@ NOZZLE_TYPE_ALIASES: dict[str, str] = {
     "pcd": "diamond",
 }
 
-# Abrasive material indicators (case-insensitive)
-ABRASIVE_KEYWORDS: tuple[str, ...] = (
-    "cf",
-    "gf",
-    "carbon",
-    "glass",
-    "glow",
-    "wood",
-    "metal",
-)
+# Nozzle type assumed when nothing says otherwise: every "no type recorded" default uses this one.
+DEFAULT_NOZZLE_TYPE = "hardened_steel"
+
+# Abrasive filament indicators, matched as whole tokens of the label (split on spaces, '-', '_',
+# '+', '/', '(' and so on), never as substrings: "Metallic" is a pigment look, not metal fill, and
+# "Hardwood" is wood. Fibre reinforcement (CF/GF, also fused as PLACF / PA6CF), glow and phosphor
+# pigments, and mineral or metal fills all wear a brass tip.
+ABRASIVE_TOKENS: frozenset[str] = frozenset({
+    "cf", "gf", "cfrp", "carbon", "carbonfiber", "carbonfibre", "glass", "glassfiber", "glassfibre",
+    "kevlar", "aramid",
+    "glow", "luminous", "phosphorescent", "noctilucent",
+    "wood", "hardwood", "wooden",
+    "metal", "steel", "iron", "copper", "bronze", "brass", "aluminum", "aluminium", "titanium",
+    "magnetic",
+    "marble", "stone", "granite", "basalt", "ceramic", "mica",
+    "sparkle", "galaxy", "glitter",
+})
+_FUSED_REINFORCEMENT = re.compile(r"^[a-z]+\d*(cf|gf)$")  # PLACF, PA6CF, PETGGF
 
 
 class NozzleError(ValueError):
@@ -238,7 +245,7 @@ def get_nozzle_type_adjustments(nozzle_type: str | None) -> dict[str, float]:
     PC, PA/nylon, composites such as Silk/CF/GF variants, …) and is never
     special-cased to one filament.
     """
-    norm = normalize_nozzle_type(nozzle_type) if nozzle_type else "hardened_steel"
+    norm = normalize_nozzle_type(nozzle_type) if nozzle_type else DEFAULT_NOZZLE_TYPE
     values = _nozzle_type_defaults()[norm].copy()
     try:
         from .. import settings
@@ -263,18 +270,20 @@ def effective_nozzle_temperature(nozzle_type: str | None, base_temperature_c: fl
     """
     adjustments = get_nozzle_type_adjustments(nozzle_type)
     effective = float(base_temperature_c) + adjustments["temp_offset_c"]
-    check_nozzle_temperature_safety(nozzle_type or "hardened_steel", effective)
+    check_nozzle_temperature_safety(nozzle_type or DEFAULT_NOZZLE_TYPE, effective)
     return effective
 
 
 def check_nozzle_temperature_safety(nozzle_type: str, temperature_c: float | int) -> None:
     """Validate the effective requested temperature against the nozzle's safe limit."""
-    adj = _nozzle_type_defaults()[normalize_nozzle_type(nozzle_type)]
-    max_temp = adj["max_temperature_c"]
+    norm_type = normalize_nozzle_type(nozzle_type)
+    max_temp = _nozzle_type_defaults()[norm_type]["max_temperature_c"]
     if float(temperature_c) > max_temp:
+        # Name the canonical type, not the raw label: "stock" or "Hardened Steel" both read as
+        # the nozzle this limit actually belongs to.
         raise NozzleTemperatureError(
             f"Requested temperature {temperature_c}°C exceeds maximum safe limit of "
-            f"{max_temp:g}°C for {nozzle_type} nozzle."
+            f"{max_temp:g}°C for {norm_type.replace('_', ' ')} nozzle."
         )
 
 
@@ -286,6 +295,11 @@ def normalize_nozzle_type(raw: str) -> str:
     if not isinstance(raw, str) or not raw.strip():
         raise NozzleError(f"nozzle type must be a non-empty string, got {raw!r}")
     cleaned = raw.strip().lower().replace("-", "_")
+    if cleaned == "stock":
+        # The seeded "stock" record says only that the factory nozzle is fitted, not what it is.
+        # Without the model's own stock type (see recorded_nozzle_type) assume the softest option,
+        # brass, so abrasive filament is refused rather than waved through as stainless.
+        return "brass"
     # Also support space-separated variants
     if cleaned in NOZZLE_TYPE_ALIASES:
         return NOZZLE_TYPE_ALIASES[cleaned]
@@ -296,17 +310,31 @@ def normalize_nozzle_type(raw: str) -> str:
     raise NozzleError(f"unknown nozzle type {raw!r}; expected one of: {valid}")
 
 
+def recorded_nozzle_type(recorded: str | None, model_default: str | None = None) -> str:
+    """The raw nozzle type to use for a hardware record's ``nozzle.type``.
+
+    A recorded type wins; "stock" (an unconfirmed factory nozzle) resolves to the model's own
+    stock/configured type when one is known, else normalizes to brass (the conservative reading).
+    No record at all uses the model default, then DEFAULT_NOZZLE_TYPE.
+    """
+    raw = recorded.strip() if isinstance(recorded, str) else ""
+    if raw and raw.lower() != "stock":
+        return raw
+    if model_default:
+        return model_default
+    return raw or DEFAULT_NOZZLE_TYPE
+
+
 def is_abrasive_material(material: str | None) -> bool:
-    """Return True if the filament material name indicates abrasive content."""
+    """Return True if the filament material name indicates abrasive content.
+
+    Token based: "Hardwood PLA" and "Metal-fill Bronze" are abrasive, "Silk PLA Metallic Gold"
+    is not (a metallic pigment look is not metal fill).
+    """
     if not material or not isinstance(material, str):
         return False
-    mat_lower = material.strip().lower()
-    # Check word boundaries or token separators like '-', '_', '+'
-    tokens = re.split(r"[\s\-_+]+", mat_lower)
-    for kw in ABRASIVE_KEYWORDS:
-        if kw in tokens or kw in mat_lower:
-            return True
-    return False
+    tokens = [t for t in re.split(r"[^a-z0-9]+", material.lower()) if t]
+    return any(t in ABRASIVE_TOKENS or _FUSED_REINFORCEMENT.match(t) for t in tokens)
 
 
 def check_nozzle_material_safety(nozzle_type: str, material: str | None) -> None:
@@ -326,6 +354,19 @@ def check_nozzle_material_safety(nozzle_type: str, material: str | None) -> None
         )
 
 
+def parse_nozzle_diameter(raw: float | int | str) -> float:
+    """A nozzle diameter in mm from a number or a label: 0.4, "0.4", "0,4", "0.40mm", "0.4 mm"."""
+    if isinstance(raw, bool):
+        raise NozzleError(f"nozzle diameter must be a number, got {raw!r}")
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if isinstance(raw, str):
+        match = re.fullmatch(r"\s*(\d+(?:[.,]\d+)?|[.,]\d+)\s*(?:mm)?\s*", raw, re.I)
+        if match:
+            return float(match.group(1).replace(",", "."))
+    raise NozzleError(f"nozzle diameter must be a number, got {raw!r}")
+
+
 def validate_nozzle_setting(
     diameter_mm: float | str,
     nozzle_type: str | None = None,
@@ -337,19 +378,19 @@ def validate_nozzle_setting(
 
     Returns (normalized_diameter_mm, normalized_nozzle_type).
     """
-    try:
-        dia = float(diameter_mm)
-    except (TypeError, ValueError):
-        raise NozzleError(f"nozzle diameter must be a number, got {diameter_mm!r}")
+    dia = parse_nozzle_diameter(diameter_mm)
     if dia <= 0:
         raise NozzleError(f"nozzle diameter must be positive, got {dia}")
 
     allowed_sizes = supported_sizes if supported_sizes is not None else CANONICAL_NOZZLE_SIZES
-    if dia not in allowed_sizes:
+    # The same 0.01 mm tolerance get_tuned_nozzle_profile matches with, so 0.40 and 0.4000001 agree.
+    matched = next((s for s in allowed_sizes if abs(float(s) - dia) < 0.01), None)
+    if matched is None:
         sizes_str = ", ".join(f"{s:g}" for s in sorted(allowed_sizes))
         raise NozzleError(f"nozzle diameter {dia:g} mm is not supported (supported: {sizes_str})")
+    dia = float(matched)
 
-    norm_type = normalize_nozzle_type(nozzle_type) if nozzle_type else "hardened_steel"
+    norm_type = normalize_nozzle_type(nozzle_type) if nozzle_type else DEFAULT_NOZZLE_TYPE
     if supported_types is not None and norm_type not in supported_types:
         types_str = ", ".join(sorted(supported_types))
         raise NozzleError(f"nozzle type '{norm_type}' is not supported (supported: {types_str})")

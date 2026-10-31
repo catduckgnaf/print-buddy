@@ -29,7 +29,7 @@ from . import spoolman_client
 STATE = str(settings.state_dir() / "printer_hardware.json")
 
 
-_FAMILY_BASES = ("PETG", "PLA", "ABS", "ASA", "TPU", "PA", "PC")
+_FAMILY_BASES = ("PETG", "PCTG", "PLA", "ABS", "ASA", "TPU", "PA", "PC")
 
 
 # Conservative documented fallback targets, configurable in [material_temps].
@@ -37,6 +37,10 @@ _FAMILY_BASES = ("PETG", "PLA", "ABS", "ASA", "TPU", "PA", "PC")
 DEFAULT_MATERIAL_TEMPS = {
     "PLA": {"nozzle": 210, "bed": 60},
     "PETG": {"nozzle": 240, "bed": 85},
+    # PCTG is its own family, not folded into PETG: it runs ~10 C hotter and a little cooler on the
+    # bed, and a PCTG spool must not silently stand in for a PETG record (same_material). Vendor
+    # ranges are 240-270 C nozzle, 70-90 C bed; these are the conservative middle.
+    "PCTG": {"nozzle": 250, "bed": 80},
     "ABS": {"nozzle": 245, "bed": 100},
     "ASA": {"nozzle": 260, "bed": 105},
     "TPU": {"nozzle": 230, "bed": 50},
@@ -75,39 +79,70 @@ MATERIAL_VARIANT_ADJUSTMENTS = {
 _NO_ADJUSTMENT = {"nozzle_delta": 0, "bed_delta": 0, "outer_wall_speed_factor": 1.0, "note": ""}
 
 
-def material_variant(material):
-    """The adjustment variant key for a material label, or None for a plain family label.
+def _material_tokens(material):
+    return re.findall(r"[A-Z0-9]+", str(material or "").upper())
 
-    Silk and Matte are finishes that can sit either side of the family token
-    ("Silk PLA", "PLA Silk"); PLA+ / PLA Pro is its own blend; a fibre-
-    reinforced family (PLA-CF, PA-GF, …) keys by family, falling back to the
-    generic REINFORCED entry when no family-specific entry exists.
+
+def material_variants(material):
+    """Every adjustment variant key that applies to a material label, in a fixed order.
+
+    Silk and Matte are finishes that can sit either side of the family token ("Silk PLA",
+    "PLA Silk"); PLA+ / PLA Pro is its own blend; a fibre-reinforced family (PLA-CF, PA-GF, ...)
+    keys by family, falling back to the generic REINFORCED entry when no family-specific entry
+    exists. Variants stack ("PLA+ Silk", "Matte PLA+", "Silk PLA-CF" carry two keys): the order
+    is finishes, then the blend, then the reinforcement. Bare "Silk" is Silk PLA.
     """
     label = str(material or "").upper()
-    tokens = re.findall(r"[A-Z]+", label)
+    squashed = re.sub(r"[\s_+\-]+", "", label)
+    tokens = _material_tokens(material)
     family = material_family(material)
-    if "SILK" in tokens:
-        return "SILK PLA" if family == "PLA" else None
-    if "MATTE" in tokens and family == "PLA":
-        return "MATTE PLA"
-    if family == "PLA" and ("+" in label or "PLUS" in tokens or "PRO" in tokens):
-        return "PLA+"
+    base = family.split("-", 1)[0]
+    keys = []
+    if base == "PLA":
+        if "SILK" in squashed:
+            keys.append("SILK PLA")
+        if "MATTE" in squashed:
+            keys.append("MATTE PLA")
+        if "+" in label or "PLUS" in tokens or "PRO" in tokens:
+            keys.append("PLA+")
     if family.endswith(("-CF", "-GF", "-CARBONFIBER", "-GLASSFIBER")):
-        return family if family in MATERIAL_VARIANT_ADJUSTMENTS else "REINFORCED"
-    return None
+        keys.append(family if family in MATERIAL_VARIANT_ADJUSTMENTS else "REINFORCED")
+    return tuple(keys)
+
+
+def material_variant(material):
+    """The dominant adjustment variant key for a material label, or None for a plain family label.
+
+    With stacked variants the one with the larger nozzle delta leads (ties keep the order of
+    material_variants), so "PLA+ Silk" and "Silk PLA-CF" report SILK PLA.
+    """
+    keys = material_variants(material)
+    if not keys:
+        return None
+    return max(keys, key=lambda k: MATERIAL_VARIANT_ADJUSTMENTS[k]["nozzle_delta"])
 
 
 def material_adjustments(material):
     """The variant adjustments for a material label (#512): temperature deltas
     on the family defaults plus the outer-wall speed factor, with its note.
 
-    Plain family labels (PLA, PETG, ABS, ASA, TPU, PA, PC, …) get the zero
-    adjustment. The returned dict always carries every key.
+    Stacked variants combine conservatively: the larger nozzle and bed delta (the hotter
+    material's behaviour wins) and the smaller outer-wall speed factor (the slower finish wins).
+    "abrasive" carries the nozzle-wear flag for the same label, so a finish never hides CF.
+    Plain family labels (PLA, PETG, ABS, ASA, TPU, PA, PC, ...) get the zero adjustment. The
+    returned dict always carries every key.
     """
-    variant = material_variant(material)
-    if variant is None:
-        return {"variant": None, **_NO_ADJUSTMENT}
-    return {"variant": variant, **MATERIAL_VARIANT_ADJUSTMENTS[variant]}
+    from .nozzle import is_abrasive_material
+    keys = material_variants(material)
+    abrasive = is_abrasive_material(material)
+    if not keys:
+        return {"variant": None, "variants": (), "abrasive": abrasive, **_NO_ADJUSTMENT}
+    rows = [MATERIAL_VARIANT_ADJUSTMENTS[k] for k in keys]
+    return {"variant": material_variant(material), "variants": keys, "abrasive": abrasive,
+            "nozzle_delta": max(r["nozzle_delta"] for r in rows),
+            "bed_delta": max(r["bed_delta"] for r in rows),
+            "outer_wall_speed_factor": min(r["outer_wall_speed_factor"] for r in rows),
+            "note": " ".join(r["note"] for r in rows)}
 
 
 def material_family(material):
@@ -115,8 +150,28 @@ def material_family(material):
 
     Carbon fiber stays distinct (PLA-CF). Unknown materials compare by their
     normalized label, so PETG never matches PLA.
+
+    Vocabulary decisions (2026-10-31 audit):
+      * PA6, PA11, PA12, PA66, PAHT -> PA; with CF/GF -> PA-CF / PA-GF (the grade changes the
+        recommended temperature, which the Spoolman filament carries, not the family).
+      * PET -> PETG. Unmodified PET prints like PETG (it is the same polymer without the glycol
+        modifier, sold interchangeably, and uses the same vendor profiles); PET-CF -> PETG-CF.
+      * PCTG stays its own family (see DEFAULT_MATERIAL_TEMPS).
+      * Shore hardness ("TPU 95A") and colour-effect or fill words are not part of the family.
+      * Bare "Silk" is Silk PLA: it is how the AD5X screen and several vendors write it.
+      * Bambu support grades PLA-S / PA-S are SUPPORT-PLA / SUPPORT-PA: distinct families that
+        match only themselves and have no print temperatures, so they are refused as model
+        material instead of being mistaken for the polymer they support.
+      * Speed/flow grades (HS, HF, High Speed) stay refused: no checked profile exists for them.
     """
-    m = re.sub(r"[\s_+\-]+", "", str(material or "").upper())
+    # A vendor name is never part of the family: Bambu sub-brands read "Bambu PLA Basic".
+    label = _BRAND_WORDS.sub(" ", str(material or "").upper())
+    m = re.sub(r"[\s_+\-]+", "", label)
+    support = {"PLAS": "SUPPORT-PLA", "PAS": "SUPPORT-PA", "SUPPORTFORPLA": "SUPPORT-PLA",
+               "SUPPORTPLA": "SUPPORT-PLA", "PLASUPPORT": "SUPPORT-PLA",
+               "SUPPORTFORPA": "SUPPORT-PA", "SUPPORTPA": "SUPPORT-PA", "PASUPPORT": "SUPPORT-PA"}
+    if m in support:
+        return support[m]
     # Labels may place the polymer name before or after a descriptor (Matte PLA).
     # Match only complete known base tokens, never a substring like PETG inside another label.
     for base in _FAMILY_BASES:
@@ -132,21 +187,73 @@ def material_family(material):
             return base
     if m in {"FLEXIBLE", "NYLON", "POLYAMIDE"}:
         return {"FLEXIBLE": "TPU", "NYLON": "PA", "POLYAMIDE": "PA"}[m]
-    # Fallback for labels the rules above do not resolve: drop finish and speed
-    # words around one polymer token ("Shiny Silk PLA", "PLA (Silk)", "PLA
-    # Basic"). Only an exact known base survives, so blends ("PLA/PHA"),
-    # speed/flow grades and unknown names stay refused rather than guessed.
+    # Fallback for labels the rules above do not resolve: drop finish, colour, fill and hardness
+    # words around one polymer token ("Shiny Silk PLA", "PLA (Silk)", "Wood PLA", "TPU 95A",
+    # "Silk PLA-CF"), optionally followed by a CF/GF reinforcement. Only an exact known base
+    # survives, so blends ("PLA/PHA"), speed/flow grades and unknown names stay refused rather
+    # than guessed.
     if "/" not in str(material or ""):
-        words = [w for w in re.findall(r"[A-Z0-9]+", str(material or "").upper()) if w not in _FINISH_WORDS]
+        words = _polymer_words(material)
         if len(words) == 1 and words[0] in _FAMILY_BASES:
             return words[0]
+        if len(words) == 2 and words[0] in _FAMILY_BASES and words[1] in {"CF", "GF"}:
+            return f"{words[0]}-{words[1]}"
+        if len(words) == 2 and words[1] in _FAMILY_BASES and words[0] in {"CF", "GF"}:  # "Carbon Fiber PETG"
+            return f"{words[1]}-{words[0]}"
+        if not words and "SILK" in _material_tokens(label):
+            return "PLA"
     return m
+
+
+_BRAND_WORDS = re.compile(r"\b(?:BAMBU\s*LAB|BAMBU|GENERIC)\b")
+_POLYMER_ALIASES = {"PET": "PETG", "PAHT": "PA", "NYLON": "PA", "POLYAMIDE": "PA", "FLEXIBLE": "TPU"}
+_POLYMER_TOKEN = re.compile(r"^(PA\d{1,3}|PAHT|PET|PETG|PCTG|PLA|ABS|ASA|TPU|PC)(CF|GF)?$")
+_SHORE_HARDNESS = re.compile(r"^\d{2,3}[AD]$")
+
+
+def _polymer_words(material):
+    """The label's tokens after dropping finish, colour, fill and Shore-hardness words, with
+    polymer grades canonicalised (PA12 -> PA, PET -> PETG) and fused reinforcement split (PA6CF)."""
+    words = []
+    for token in _material_tokens(_BRAND_WORDS.sub(" ", str(material or "").upper())):
+        if token in _FINISH_WORDS or token in _FILL_WORDS or token in _COLOR_WORDS or _SHORE_HARDNESS.match(token):
+            continue
+        if re.fullmatch(r"TPU\d{2,3}[AD]", token):
+            token = "TPU"
+        match = _POLYMER_TOKEN.match(token)
+        if match:
+            base, fibre = match.groups()
+            base = "PA" if base.startswith("PA") and base != "PAHT" else base
+            words.append(_POLYMER_ALIASES.get(base, base))
+            if fibre:
+                words.append(fibre)
+            continue
+        words.append(token)
+    # "Carbon Fiber" / "Glass Fibre" are CF / GF spelled out.
+    joined = " ".join(words)
+    joined = re.sub(r"\bCARBON FIB(?:ER|RE)\b", "CF", joined)
+    joined = re.sub(r"\bGLASS FIB(?:ER|RE)\b", "GF", joined)
+    return joined.split()
 
 
 # Surface-finish descriptors that do not change the thermal family (#512 covers the
 # adjustments that matter: Silk, Matte, PLA+). Speed/flow grades (HS, HF) print hotter and
 # reinforcement (CF/GF) is abrasive, so both stay distinct families, never folded in here.
-_FINISH_WORDS = frozenset({"SILK", "MATTE", "SHINY", "GLOSSY", "SATIN", "BASIC", "PRO", "PLUS", "TOUGH"})
+_FINISH_WORDS = frozenset({"SILK", "MATTE", "SHINY", "GLOSSY", "SATIN", "BASIC", "PRO", "PLUS", "TOUGH",
+                           "METALLIC", "PEARL", "PEARLESCENT"})
+# Colour-effect and colour words: pigments, not polymers ("Silk Rainbow PLA", "Dual-Color Silk PLA",
+# "Tri-color Silk PLA", "Silk PLA Metallic Gold").
+_COLOR_WORDS = frozenset({
+    "RAINBOW", "DUAL", "TRI", "BI", "COLOR", "COLOUR", "COLORS", "COLOURS", "TRICOLOR", "DUALCOLOR",
+    "BICOLOR", "MULTICOLOR", "MULTI", "GRADIENT", "COEXTRUDED",
+    "GOLD", "GOLDEN", "SILVER", "BLACK", "WHITE", "RED", "BLUE", "GREEN", "YELLOW", "ORANGE", "PURPLE",
+    "PINK", "GRAY", "GREY", "BROWN", "TEAL", "CYAN", "MAGENTA", "VIOLET", "NAVY", "BEIGE", "IVORY"})
+# Fill and additive words: the polymer underneath prints at its own temperatures, but most of
+# these wear a brass nozzle, which core.nozzle.is_abrasive_material flags separately.
+_FILL_WORDS = frozenset({
+    "WOOD", "HARDWOOD", "WOODEN", "GLOW", "LUMINOUS", "MARBLE", "SPARKLE", "GALAXY", "GLITTER",
+    "METAL", "BASALT", "CERAMIC", "COPPER", "BRONZE", "STEEL", "ALUMINUM", "ALUMINIUM", "MICA",
+    "MAGNETIC", "STONE", "FILL", "FILLED"})
 
 
 _DISPLAY_ACRONYMS = frozenset({"PLA", "PETG", "PET", "PCTG", "ABS", "ASA", "TPU", "TPE", "PA", "PA6", "PA11",
@@ -198,12 +305,15 @@ def resolve_material_temperatures(material, filament, config=None):
     deltas = {"nozzle": adjustments["nozzle_delta"], "bed": adjustments["bed_delta"]}
     for key, field in (("nozzle", "settings_extruder_temp"), ("bed", "settings_bed_temp")):
         value = filament.get(field)
+        # Spoolman stores "not set" as 0 or null: neither is an explicit operator temperature.
+        if value is not None and not isinstance(value, bool) and isinstance(value, (int, float)) and value == 0:
+            value = None
         if value is None:
             # The variant adjustment (#512) refines the family default only:
             # a temperature recorded on the Spoolman filament is explicit
             # operator/manufacturer data and is never adjusted.
             value = base[key] + deltas[key]
-            sources[key] = (f"material default + {adjustments['variant']} adjustment"
+            sources[key] = (f"material default + {' + '.join(adjustments['variants'])} adjustment"
                             if adjustments["variant"] and deltas[key] else "material default")
         else:
             sources[key] = "Spoolman filament"
@@ -343,6 +453,28 @@ def save(st, printer_id=None):
     os.replace(tmp, target)
 
 
+def _model_nozzle_default(view=None):
+    """The nozzle type the printer model ships with: the configured/model [printer] nozzle_type,
+    else None (unknown). Used to resolve a "stock" record to something the model really has."""
+    try:
+        return ((view if view is not None else settings.current()).get("printer") or {}).get("nozzle_type") or None
+    except Exception:
+        return None
+
+
+def _seed_nozzle_type(printer, view):
+    """The nozzle type a new record starts with: the model's own stock type when known (its
+    configured/model default, else the first type it supports), else "stock" (unconfirmed,
+    which refuses abrasive filament until the operator records the real nozzle)."""
+    declared = printer.get("nozzle_type") or _model_nozzle_default(view)
+    if declared:
+        return declared
+    try:
+        return printers.get(printer["model"], view).supported_nozzle_types[0]
+    except Exception:
+        return "stock"
+
+
 def seed_hardware_record(printer_id, view=None):
     """Create a newly onboarded printer's first hardware record (#537).
 
@@ -367,7 +499,7 @@ def seed_hardware_record(printer_id, view=None):
         "moonraker_url": (view.get("services") or {}).get("moonraker_url") or "",
         "bed_mm": [float(v) for v in printer["bed_mm"]],
         "max_print_height_mm": float(printer["max_print_height_mm"]),
-        "nozzle": {"diameter_mm": float(printer["nozzle_diameter_mm"]), "type": "stock",
+        "nozzle": {"diameter_mm": float(printer["nozzle_diameter_mm"]), "type": _seed_nozzle_type(printer, view),
                    "installed": datetime.date.today().isoformat()},
         "temps_c": {"nozzle": pla["nozzle"], "bed": pla["bed"]},
         "spool": {},
@@ -592,6 +724,11 @@ def _check_spoolman(st, warnings, facts):
             warnings.append(f"Spoolman spool #{sp['id']} is archived")
         if filament["name"] != st["spool"]["name"]:
             warnings.append(f"Spoolman #{sp['id']} is '{filament['name']}', state says '{st['spool']['name']}'")
+        recorded_material, spoolman_material = st["spool"].get("material"), filament.get("material")
+        if recorded_material and spoolman_material and not same_material(recorded_material, spoolman_material):
+            warnings.append(f"Spoolman #{sp['id']} material is {spoolman_material!r}, but the recorded spool "
+                            f"is {recorded_material!r}; the record is kept — check what is loaded, then "
+                            "re-run set --spool if Spoolman is right")
     except Exception as e:
         warnings.append("Spoolman could not be reached, so the recorded spool was used instead; "
                         "printing can continue (#235)")
@@ -775,12 +912,21 @@ def fetch_spoolman_spool(spool_id, st=None):
                                    base_url=spoolman_url(st))
 
 
+def _nozzle_arg(text):
+    """argparse type for --nozzle: accepts units and comma decimals like validate_nozzle_setting."""
+    from .nozzle import NozzleError, parse_nozzle_diameter
+    try:
+        return parse_nozzle_diameter(text)
+    except NozzleError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check"); sub.add_parser("show")
     s = sub.add_parser("set")
-    s.add_argument("--spool", type=int); s.add_argument("--nozzle", type=float)
+    s.add_argument("--spool", type=int); s.add_argument("--nozzle", type=_nozzle_arg, help="diameter in mm: 0.4, 0,4 or 0.40mm")
     s.add_argument("--nozzle-type"); s.add_argument("--nozzle-temp", type=int); s.add_argument("--bed-temp", type=int)
     s.add_argument("--z-offset", type=float, help="record a measured user offset; does not write Klipper or the native screen")
     s.add_argument("--sync-z", action="store_true", help="record live probe.z_offset as the probe store only; never marks the user offset verified")
@@ -811,8 +957,8 @@ def main():
         st["spool"] = {"spoolman_id": a.spool, "name": f["name"], "material": f.get("material"),
                        "diameter_mm": f.get("diameter", 1.75), "density": f.get("density", 1.24)}
         family, targets, sources = resolve_material_temperatures(f.get("material"), f)
-        from .nozzle import effective_nozzle_temperature
-        nozzle_type = (st.get("nozzle") or {}).get("type", "hardened_steel")
+        from .nozzle import effective_nozzle_temperature, recorded_nozzle_type
+        nozzle_type = recorded_nozzle_type((st.get("nozzle") or {}).get("type"), _model_nozzle_default())
         effective_nozzle_temperature(nozzle_type, targets["nozzle"])
         st["temps_c"] = {"nozzle": targets["nozzle"], "bed": targets["bed"]}
         st["temperature_resolution"] = {"material_family": family, "material": f.get("material"),
@@ -820,10 +966,12 @@ def main():
                                          "source": "Spoolman filament" if all(v == "Spoolman filament" for v in sources.values()) else "material default / Spoolman filament" if len(set(sources.values())) > 1 else next(iter(sources.values()), "material default")}
         _get(f"{st['moonraker_url']}/server/spoolman/spool_id", {"spool_id": a.spool}, "POST")
     if a.nozzle is not None or a.nozzle_type is not None:
-        from .nozzle import CANONICAL_NOZZLE_SIZES, NozzleError, normalize_nozzle_type, validate_nozzle_setting
+        from .nozzle import (CANONICAL_NOZZLE_SIZES, NozzleError, normalize_nozzle_type, recorded_nozzle_type,
+                             validate_nozzle_setting)
         current_nozzle = st.get("nozzle") or {}
         dia_in = a.nozzle if a.nozzle is not None else current_nozzle.get("diameter_mm", 0.4)
-        raw_type = a.nozzle_type if a.nozzle_type is not None else current_nozzle.get("type", "hardened_steel")
+        raw_type = a.nozzle_type if a.nozzle_type is not None else recorded_nozzle_type(
+            current_nozzle.get("type"), _model_nozzle_default())
         
         # Check against active printer capabilities if available
         supported_sizes = None

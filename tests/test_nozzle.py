@@ -27,7 +27,7 @@ def test_normalize_nozzle_type_canonical():
     assert normalize_nozzle_type("hardened_steel") == "hardened_steel"
     assert normalize_nozzle_type("hardened steel") == "hardened_steel"
     assert normalize_nozzle_type("Hardened-Steel") == "hardened_steel"
-    assert normalize_nozzle_type("stock") == "stainless_steel"
+    # "stock" is no longer a fixed alias: it resolves per model (tests/test_material_hardening.py).
     assert normalize_nozzle_type("ruby") == "ruby"
     assert normalize_nozzle_type("ruby tipped") == "ruby"
     assert normalize_nozzle_type("tungsten carbide") == "tungsten_carbide"
@@ -306,7 +306,7 @@ def test_nozzle_type_characteristics_and_adjustments(monkeypatch):
         effective_nozzle_temperature("hardened_steel", 446)
     monkeypatch.setattr(settings, "current", lambda: {"nozzle_temp_offsets": {}})
 
-    stainless = get_nozzle_type_adjustments("stock")  # alias to stainless_steel
+    stainless = get_nozzle_type_adjustments("stainless steel")
     assert stainless["max_temperature_c"] == 300.0
     assert stainless["temp_offset_c"] == 5.0
     assert stainless["flow_multiplier"] == 0.95

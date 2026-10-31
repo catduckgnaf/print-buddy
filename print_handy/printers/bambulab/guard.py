@@ -170,7 +170,8 @@ def gcode_problems(text, adapter, *, state=None):
     state, when given, is the printer hardware record: its nozzle, spool material and temperatures must match.
     """
     from ...core import slice_guard
-    from ...core.nozzle import NozzleError, effective_nozzle_temperature, is_abrasive_material, normalize_nozzle_type
+    from ...core.nozzle import (DEFAULT_NOZZLE_TYPE, NozzleError, effective_nozzle_temperature, is_abrasive_material,
+                                normalize_nozzle_type)
     from ...core.printer_state import material_family, same_material
 
     fact = adapter.fact
@@ -285,7 +286,10 @@ def gcode_problems(text, adapter, *, state=None):
                         f"{_config(text, 'filament_type')!r}")
     for material in materials:
         family = material_family(material)
-        if family.split("-", 1)[0] in fact("not_recommended_materials"):
+        # Bambu's "PET" entry is its PET-CF: material_family reads that as PETG-CF (plain PET is PETG
+        # and stays allowed), so the reinforced PET grades are matched under Bambu's own name.
+        listed = {family.split("-", 1)[0]} | ({"PET"} if family in ("PETG-CF", "PETG-GF") else set())
+        if listed & set(fact("not_recommended_materials")):
             problems.append(f"{material} is not recommended by Bambu Lab for the {name}; refused")
         if is_abrasive_material(material) and nozzle_type != "hardened_steel":
             problems.append(f"{material} is abrasive; the {name} needs a hardened steel nozzle for it")
@@ -297,7 +301,7 @@ def gcode_problems(text, adapter, *, state=None):
         # the live AMS snapshot, checked in the print path (ams_mapping, #308).
         if len(materials) == 1 and not same_material(materials[0], state["spool"]["material"]):
             problems.append(f"G-code filament_type {materials[0]!r} != loaded {state['spool']['material']!r}")
-        hotend = effective_nozzle_temperature(nozzle_type or "stainless_steel", float(state["temps_c"]["nozzle"]))
+        hotend = effective_nozzle_temperature(nozzle_type or DEFAULT_NOZZLE_TYPE, float(state["temps_c"]["nozzle"]))
         bed_c = float(state["temps_c"]["bed"])
         if not any(math.isclose(v, bed_c, abs_tol=1e-3) for v in _numbers(text, "M140") + _numbers(text, "M190")):
             problems.append(f"no M140/M190 sets the recorded bed temperature {bed_c:g} C")

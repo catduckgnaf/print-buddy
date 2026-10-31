@@ -7,6 +7,7 @@ and the readback (raises, still heating, printing). After each, the table assert
 message the person gets, and that no upload or start request was ever repeated. Nothing here contacts a
 printer.
 """
+import contextlib
 import io
 import json
 import os
@@ -30,6 +31,22 @@ REAL_WAIT_PRINTING = model_job._wait_printing
 
 
 # --------------------------------------------------------------------------- helpers
+
+@pytest.fixture
+def patch(request):
+    """mock.patch.object for tests that use the `mapped` or `printer` fixture.
+
+    Those fixtures patch model_job names with mocks. A monkeypatch (set up earlier, as an autouse
+    fixture's dependency) would restore the mock *after* they restored the real function, leaking it into
+    later tests; this one is set up after them, so it is undone first.
+    """
+    for name in ("mapped", "printer"):
+        if name in request.fixturenames:
+            request.getfixturevalue(name)
+    with contextlib.ExitStack() as stack:
+        yield lambda obj, attr, value: stack.enter_context(mock.patch.object(obj, attr, value))
+
+
 
 class Run(tuple):
     """(exit ok, the last-6-lines tail the intake sees, the whole output)."""
@@ -402,10 +419,10 @@ GENERIC_CASES = {
 
 
 @pytest.mark.parametrize("case", sorted(GENERIC_CASES))
-def test_generic_moonraker_failure_table(case, printer, monkeypatch, capsys):
+def test_generic_moonraker_failure_table(case, printer, monkeypatch, capsys, patch):
     build, want_ok, want_leases, want_phase, want_status = GENERIC_CASES[case]
     script = MoonrakerScript(printer, **build())
-    monkeypatch.setattr(model_job, "_wait_printing", lambda *a, **k: "standby")
+    patch(model_job, "_wait_printing", lambda *a, **k: "standby")
     jp, _ = make_job(printer.root, "a")
     ok, tail, full = run_cli(monkeypatch, capsys, lambda: REAL_PRINT_NOW(jp))
     assert ok is want_ok, tail
@@ -423,9 +440,9 @@ def test_generic_moonraker_failure_table(case, printer, monkeypatch, capsys):
 REAL_PRINT_NOW = model_job.print_now
 
 
-def test_item5_generic_readback_error_after_the_start_is_a_clean_uncertain_line(printer, monkeypatch, capsys):
+def test_item5_generic_readback_error_after_the_start_is_a_clean_uncertain_line(printer, monkeypatch, capsys, patch):
     MoonrakerScript(printer, phase_raises=http_error(503, "Service Unavailable"))
-    monkeypatch.setattr(model_job, "_wait_printing", REAL_WAIT_PRINTING)
+    patch(model_job, "_wait_printing", REAL_WAIT_PRINTING)
     jp, _ = make_job(printer.root, "a")
     out = model_job.print_now(jp, wait_s=0)
     text = capsys.readouterr().out
@@ -433,12 +450,12 @@ def test_item5_generic_readback_error_after_the_start_is_a_clean_uncertain_line(
     assert phases() == ["uncertain"] and model_job._read_claims() == {}
 
 
-def test_item5_a_failing_print_number_or_record_does_not_hide_a_confirmed_start(printer, monkeypatch):
+def test_item5_a_failing_print_number_or_record_does_not_hide_a_confirmed_start(printer, monkeypatch, patch):
     MoonrakerScript(printer, after=lambda r: moonraker_status(filename=r, state="printing"))
-    monkeypatch.setattr(model_job, "_assign_print_number", mock.Mock(side_effect=OSError("disk full")))
-    monkeypatch.setattr(model_job, "record_start", mock.Mock(side_effect=OSError("disk full")))
+    patch(model_job, "_assign_print_number", mock.Mock(side_effect=OSError("disk full")))
+    patch(model_job, "record_start", mock.Mock(side_effect=OSError("disk full")))
     jp, _ = make_job(printer.root, "a")
-    monkeypatch.setattr(model_job, "_wait_printing", lambda *a, **k: "printing")
+    patch(model_job, "_wait_printing", lambda *a, **k: "printing")
     out = model_job.print_now(jp)
     assert out["started"] is True and out["print_number"] is None and phases() == []
 
@@ -451,9 +468,9 @@ def test_item6_start_rejection_is_only_a_typed_4xx():
         assert model_job._start_rejection(exc) is None
 
 
-def test_item6_a_rejected_start_leaves_the_printer_free_for_the_next_job(printer, monkeypatch, capsys):
+def test_item6_a_rejected_start_leaves_the_printer_free_for_the_next_job(printer, monkeypatch, capsys, patch):
     MoonrakerScript(printer, start=raises(http_error(400, "Must home axis first")))
-    monkeypatch.setattr(model_job, "_wait_printing", lambda *a, **k: "standby")
+    patch(model_job, "_wait_printing", lambda *a, **k: "standby")
     jp, _ = make_job(printer.root, "a")
     with pytest.raises(SystemExit, match=r"REFUSED: the printer rejected the start request \(HTTP 400: Must home"):
         model_job.print_now(jp)
@@ -464,12 +481,12 @@ def test_item6_a_rejected_start_leaves_the_printer_free_for_the_next_job(printer
     assert model_job.print_now(b)["started"] is True
 
 
-def test_item8_generic_lost_post_is_reconciled_like_the_mapped_path(printer, monkeypatch):
+def test_item8_generic_lost_post_is_reconciled_like_the_mapped_path(printer, monkeypatch, patch):
     """A 30 s POST can time out after Moonraker accepted it. It used to raise with no reconcile."""
     script = MoonrakerScript(printer, start=raises(TimeoutError("timed out")),
                              after=lambda r: moonraker_status(filename="3mf_print/" + r, state="printing"))
     jp, _ = make_job(printer.root, "a")
-    monkeypatch.setattr(model_job, "_wait_printing", lambda *a, **k: "standby")
+    patch(model_job, "_wait_printing", lambda *a, **k: "standby")
     out = model_job.print_now(jp)
     assert out["phase"] == "executing" and out["accepted"] is True and script.posts == 1
     assert phases() == ["uncertain"]  # the duplicate guard holds until the printer reports the file
@@ -508,7 +525,7 @@ MAPPED_CASES = {
 
 
 @pytest.mark.parametrize("case", sorted(MAPPED_CASES))
-def test_mapped_native_failure_table(case, mapped, monkeypatch, capsys):
+def test_mapped_native_failure_table(case, mapped, monkeypatch, capsys, patch):
     options = MAPPED_CASES[case][0](mapped)
     original = model_job._mr.side_effect
     posts = []
@@ -527,9 +544,9 @@ def test_mapped_native_failure_table(case, mapped, monkeypatch, capsys):
 
     model_job._mr.side_effect = mr
     if options.get("wait"):
-        monkeypatch.setattr(model_job, "_wait_printing", mock.Mock(side_effect=options["wait"]))
+        patch(model_job, "_wait_printing", mock.Mock(side_effect=options["wait"]))
     if options.get("printing"):
-        monkeypatch.setattr(model_job, "_wait_printing", lambda *a, **k: "printing")
+        patch(model_job, "_wait_printing", lambda *a, **k: "printing")
     model_job._preparation_evidence.return_value = bool(options.get("heating"))
     jp, g = make_job(mapped.root, "a")
     job = json.loads(jp.read_text())
@@ -554,17 +571,17 @@ def want_ok(case):
     return MAPPED_CASES[case][1]
 
 
-def test_item5_mapped_record_and_number_failures_do_not_mask_the_start(mapped, monkeypatch):
-    monkeypatch.setattr(model_job, "_assign_print_number", mock.Mock(side_effect=OSError("disk full")))
-    monkeypatch.setattr(model_job, "record_start", mock.Mock(side_effect=OSError("disk full")))
-    monkeypatch.setattr(model_job, "_wait_printing", lambda *a, **k: "printing")
+def test_item5_mapped_record_and_number_failures_do_not_mask_the_start(mapped, monkeypatch, patch):
+    patch(model_job, "_assign_print_number", mock.Mock(side_effect=OSError("disk full")))
+    patch(model_job, "record_start", mock.Mock(side_effect=OSError("disk full")))
+    patch(model_job, "_wait_printing", lambda *a, **k: "printing")
     jp, g = make_job(mapped.root, "a")
     out = model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, json.loads(jp.read_text()), jp, 0, False)
     assert out["started"] is True and out["print_number"] is None and phases() == []
 
 
-def test_item5_mapped_readback_error_is_uncertain_not_a_traceback(mapped, monkeypatch, capsys):
-    monkeypatch.setattr(model_job, "_wait_printing", mock.Mock(side_effect=http_error(503, "Service Unavailable")))
+def test_item5_mapped_readback_error_is_uncertain_not_a_traceback(mapped, monkeypatch, capsys, patch):
+    patch(model_job, "_wait_printing", mock.Mock(side_effect=http_error(503, "Service Unavailable")))
     jp, g = make_job(mapped.root, "a")
     out = model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, json.loads(jp.read_text()), jp, 0, False)
     text = capsys.readouterr().out
@@ -574,8 +591,8 @@ def test_item5_mapped_readback_error_is_uncertain_not_a_traceback(mapped, monkey
 
 # --------------------------------------------------------------------------- item 3: the checkpoint
 
-def launch_twice(mapped, monkeypatch, second_reprint):
-    monkeypatch.setattr(model_job, "_wait_printing", lambda *a, **k: "printing")
+def launch_twice(mapped, patch, second_reprint):
+    patch(model_job, "_wait_printing", lambda *a, **k: "printing")
     jp, g = make_job(mapped.root, "a")
     job = json.loads(jp.read_text())
     first = model_job.print_mapped_native(g, mapped.st, {"display_off": 1}, {"0": 1}, job, None, 0, False)
@@ -583,8 +600,8 @@ def launch_twice(mapped, monkeypatch, second_reprint):
         g, mapped.st, {"display_off": 1}, {"0": 1}, job, None, 0, second_reprint)
 
 
-def test_item3_a_deliberate_reprint_is_a_new_attempt_with_its_own_checkpoint(mapped, monkeypatch):
-    g, first, again = launch_twice(mapped, monkeypatch, second_reprint=True)
+def test_item3_a_deliberate_reprint_is_a_new_attempt_with_its_own_checkpoint(mapped, patch):
+    g, first, again = launch_twice(mapped, patch, second_reprint=True)
     assert phases() == []  # the first attempt settled
     second = again()
     assert len(mapped.scripts) == 2 and len(uploads(mapped.run)) == 2
@@ -592,15 +609,15 @@ def test_item3_a_deliberate_reprint_is_a_new_attempt_with_its_own_checkpoint(map
     assert json.loads(g.with_suffix(".launch.json").read_text())["lease_token"] == second["lease_token"]
 
 
-def test_item3_an_unapproved_replay_is_still_refused_before_anything_is_uploaded(mapped, monkeypatch):
-    g, first, again = launch_twice(mapped, monkeypatch, second_reprint=False)
+def test_item3_an_unapproved_replay_is_still_refused_before_anything_is_uploaded(mapped, patch):
+    g, first, again = launch_twice(mapped, patch, second_reprint=False)
     with pytest.raises(RuntimeError, match="checkpoint exists"):
         again()
     assert len(mapped.scripts) == 1 and len(uploads(mapped.run)) == 1 and phases() == []
 
 
-def test_item3_an_attempt_that_never_reached_the_printer_does_not_block_a_retry(mapped, monkeypatch):
-    monkeypatch.setattr(model_job, "_wait_printing", lambda *a, **k: "printing")
+def test_item3_an_attempt_that_never_reached_the_printer_does_not_block_a_retry(mapped, monkeypatch, patch):
+    patch(model_job, "_wait_printing", lambda *a, **k: "printing")
     jp, g = make_job(mapped.root, "a")
     job = json.loads(jp.read_text())
     original = model_job._mr.side_effect
@@ -614,8 +631,8 @@ def test_item3_an_attempt_that_never_reached_the_printer_does_not_block_a_retry(
     assert out["started"] is True  # no --reprint needed: the first attempt provably sent nothing
 
 
-def test_item3_the_checkpoint_file_is_kept_for_print_again(mapped, monkeypatch):
-    g, _first, _again = launch_twice(mapped, monkeypatch, second_reprint=False)
+def test_item3_the_checkpoint_file_is_kept_for_print_again(mapped, patch):
+    g, _first, _again = launch_twice(mapped, patch, second_reprint=False)
     assert g.with_suffix(".launch.json").is_file()
 
 

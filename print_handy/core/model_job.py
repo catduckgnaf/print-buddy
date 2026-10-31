@@ -7030,6 +7030,24 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
     return out
 
 
+def _print_now_cli(target, **kw):
+    """print-now with an honest outcome line. A failure before any lease reached submitting()
+    never asked the printer to start, so it ends as a REFUSED line (the chat then says it did
+    not start and the one-start claim is released); after submitting() it stays uncertain."""
+    import traceback
+    launch_state.reset_submitted()
+    try:
+        return print_now(target, **kw)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        traceback.print_exc()  # the detail stays in the log and receipt
+        reason = ' '.join(str(exc).split()) or type(exc).__name__
+        if launch_state.submitted():
+            raise SystemExit(f"UNCERTAIN: the start was sent and then failed: {reason}") from exc
+        raise SystemExit(f"REFUSED: {reason}. Nothing started.") from exc
+
+
 def main():
     try:
         _main()
@@ -7234,7 +7252,7 @@ def _main():
         if a.accept_spool_change:
             os.environ["PRINT_ACCEPT_SPOOL_CHANGE"] = "1"
             print("SPOOL CHANGE ACCEPTED: slots may hold a different spool than at slicing (same material family)", flush=True)
-        print_now(a.target, **pn_kw); return
+        _print_now_cli(a.target, **pn_kw); return
     st=printer_state.load()
     if a.cmd=="slice":
         if not a.approved: raise SystemExit("REFUSED: explicit slicing approval required")

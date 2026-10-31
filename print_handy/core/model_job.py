@@ -5843,15 +5843,18 @@ def _require_idle_before_mapped_launch(require_idle_settled, read_moonraker, rea
 
 def _native_file_matches(reported, remote):
     """Match only documented Klipper paths for this upload, including ZMod's 3MF unpack path."""
-    reported = str(reported or "").replace("\\\\", "/").lstrip("/")
-    remote = str(remote or "").replace("\\\\", "/").lstrip("/")
-    expected = {remote}
-    if remote.endswith(".gcode.3mf"):
-        unpacked = remote[:-4]
-        expected.update({unpacked, "3mf_print/" + unpacked, "gcodes/" + unpacked})
-    elif remote.endswith(".gcode"):
-        expected.update({"gcodes/" + remote, "3mf_print/" + remote})
-    return reported in expected
+    return launch_state.same_remote(reported, remote)
+
+
+def _moonraker_started_files(st):
+    """Moonraker's recent job history as (filename, start_epoch) pairs, for settling an uncertain
+    earlier start (launch_state.reached_printer). Unreadable history settles nothing."""
+    try:
+        jobs = _mr(st, '/server/history/list?limit=20&order=desc', timeout=10)['result']['jobs']
+        return [(j.get('filename'), j.get('start_time')) for j in jobs
+                if isinstance(j, dict) and j.get('filename') and isinstance(j.get('start_time'), (int, float))]
+    except Exception:
+        return []
 
 
 def _reconcile_native_submission(st, remote):
@@ -5915,16 +5918,24 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     else:
         occupancy = read_stock_filament_slots_from_detail(read_native())
     normalize_mapping = adapter.native.normalize_mapping
+    label_matches = adapter.native.screen_label_matches
     mapped = normalize_mapping(mapping, st)
     for tool, slot in mapped.items():
         expected = st['filament_slots'][str(slot)]
         matches = [item for item in configured if str(item.get('ID')) == str(slot)]
-        # Family match (PLA == PLA+): the native slot label is coarser than Spoolman's material,
-        # so an exact compare refused a correctly loaded PLA+ spool.
-        if len(matches) != 1 or not printer_state.same_material(matches[0].get('Material'), expected['material']):
-            raise RuntimeError(f'T{tool} slot {slot} live material mapping mismatch or unknown')
-        if str(matches[0].get('HEX', '')).lstrip('#').upper() != expected['hex'].lstrip('#').upper():
-            raise RuntimeError(f'T{tool} slot {slot} live RGB mapping mismatch or unknown')
+        # The native slot label is coarser than Spoolman's material: family match
+        # (PLA == PLA+), or the screen's own type for it (SILK for Silk PLA).
+        if len(matches) != 1:
+            raise SystemExit(f"REFUSED: printer slot {slot} is missing from the printer's slot list (T{tool}). "
+                             "Nothing uploaded or started.")
+        label = matches[0].get('Material')
+        if not label_matches(label, expected['material']):
+            raise SystemExit(f"REFUSED: printer slot {slot} is labeled {label or 'blank'} but Spoolman has "
+                             f"{expected['material']} there (T{tool}). Nothing uploaded or started.")
+        live_hex = str(matches[0].get('HEX', '')).lstrip('#').upper()
+        if live_hex != expected['hex'].lstrip('#').upper():
+            raise SystemExit(f"REFUSED: printer slot {slot} color is #{live_hex or 'blank'} but Spoolman has "
+                             f"#{expected['hex'].lstrip('#').upper()} there (T{tool}). Nothing uploaded or started.")
         if occupancy.get(slot) is not True:
             # Operator-confirmed loaded feeders supersede idle false occupancy,
             # never unknown telemetry or an actual native error/activity.
@@ -5934,7 +5945,8 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     remote = remote_name(g, sha, job)
     upload_path, upload_sha, remote, delivery = _zmod_upload_artifact(adapter, st, g, sha, remote)
     lease = launch_state.acquire(_printer_key(st, job), job_json=job_path, gcode_sha256=sha, remote=remote,
-                                 observed_file=(status.get('print_stats') or {}).get('filename'))
+                                 observed_file=(status.get('print_stats') or {}).get('filename'),
+                                 started_files=lambda: _moonraker_started_files(st))
     try:
         # Again inside the lease: the first read may predate another job's start.
         require_idle()
@@ -6938,7 +6950,8 @@ def print_now(target, wait_s=25, accept_default_z_offset=False, reprint=False, r
         except Exception as exc:
             raise SystemExit(f'REFUSED: native preflight: {exc}. Nothing uploaded or started.') from exc
     upload_path, upload_sha, remote, delivery = _zmod_upload_artifact(adapter, st, g, sha, remote)
-    lease=launch_state.acquire(_printer_key(st, job), job_json=job_path, gcode_sha256=sha, remote=remote, observed_file=fn)
+    lease=launch_state.acquire(_printer_key(st, job), job_json=job_path, gcode_sha256=sha, remote=remote, observed_file=fn,
+                               started_files=lambda: _moonraker_started_files(st))
     try:
         _require_idle(st)  # again inside the lease: the first read may predate another job's start
         if job_path is not None: _consume_approval(job_path, job, g, reprint=reprint)

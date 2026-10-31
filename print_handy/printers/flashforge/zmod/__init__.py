@@ -33,9 +33,10 @@ read_stock_filament_slots = _forward(stock, "read_stock_filament_slots")
 read_stock_filament_slots_from_detail = _forward(stock, "read_stock_filament_slots_from_detail")
 validate_native_start = _forward(stock, "validate_native_start")
 apply_stock_presence = _forward(stock, "apply_stock_presence")
+screen_label_matches = _forward(screen, "label_matches", "screen_label_matches")
 
 __all__ = ["apply_stock_presence", "describe_mapping", "embedded_mapping", "finalize", "multicolor_contract",
            "native_idle", "native_startup", "native_startup_valid", "normalize_mapping", "read_stock_detail",
            "read_stock_filament_slots", "read_stock_filament_slots_from_detail", "read_zmod_color_slots",
-           "require_idle_screenless", "require_idle_settled", "screen",
+           "require_idle_screenless", "require_idle_settled", "screen", "screen_label_matches",
            "stock", "validate_materials", "validate_native_start"]

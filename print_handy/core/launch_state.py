@@ -15,7 +15,8 @@ Lease phases: ``leased`` (checks and upload, nothing started), ``submitting`` (p
 start request), ``uncertain`` (sent, outcome unknown). A confirmed or failed start deletes the row.
 An unfinished ``leased`` row whose process is gone is released: nothing was sent. A ``submitting``
 or ``uncertain`` row is never released by guessing and never replayed. It is reconciled when the
-printer reports that exact file, or by the operator with ``model_job reconcile-launch``.
+printer reports that exact file, now or in its job history since the lease, or by the operator with
+``model_job reconcile-launch``.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 from .. import settings
@@ -128,6 +130,53 @@ def _owner_alive(row, unknown=True):
     return True
 
 
+def same_remote(reported, remote):
+    """Whether a file name the printer reports is this upload: the exact name or a documented
+    Klipper path for it, including ZMod's 3MF unpack path (X.gcode.3mf -> 3mf_print/X.gcode)."""
+    reported = str(reported or "").replace("\\\\", "/").lstrip("/")
+    remote = str(remote or "").replace("\\\\", "/").lstrip("/")
+    if not remote:
+        return False
+    expected = {remote}
+    if remote.endswith(".gcode.3mf"):
+        unpacked = remote[:-4]
+        expected.update({unpacked, "3mf_print/" + unpacked, "gcodes/" + unpacked})
+    elif remote.endswith(".gcode"):
+        expected.update({"gcodes/" + remote, "3mf_print/" + remote})
+    return reported in expected
+
+
+# Printer and host clocks drift; a history start this far before the lease still counts. An
+# older run of the same file (a reprint) started well before its lease and never matches.
+HISTORY_SLACK_S = 120
+
+
+def reached_printer(row, observed_file=None, started_files=()):
+    """Whether a submitting/uncertain lease's exact file reached the printer: it is the current
+    file, or the printer's job history shows it starting after the lease was taken.
+
+    started_files is (filename, start_epoch) pairs, or a callable returning them, read only
+    when the current file does not already settle it.
+    """
+    remote = row["remote"]
+    if not remote:
+        return False
+    if same_remote(observed_file, remote):
+        return True
+    try:
+        since = datetime.strptime(row["leased_at"], "%Y-%m-%dT%H:%M:%S%z").timestamp() - HISTORY_SLACK_S
+    except (TypeError, ValueError):
+        return False
+    try:
+        history = started_files() if callable(started_files) else started_files
+        for filename, started in history or ():
+            if same_remote(filename, remote) and float(started) >= since:
+                return True
+    except Exception:
+        return False  # unreadable history settles nothing; the lease stays uncertain
+    return False
+
+
 def _describe(row):
     return f"job {row['job_json'] or 'unknown'}, file {row['remote'] or 'unknown'}, since {row['leased_at']}"
 
@@ -155,8 +204,10 @@ class Lease:
             con.execute("DELETE FROM leases WHERE printer=? AND token=?", (self.printer, self.token))
 
 
-def acquire(printer, *, job_json=None, gcode_sha256=None, remote=None, observed_file=None):
-    """Take the printer's lease or refuse. observed_file is the file the printer reports right now.
+def acquire(printer, *, job_json=None, gcode_sha256=None, remote=None, observed_file=None, started_files=()):
+    """Take the printer's lease or refuse. observed_file is the file the printer reports right now;
+    started_files is its job history as (filename, start_epoch) pairs, or a callable read only when
+    an earlier submission is held (see reached_printer).
 
     `printer` is the roster printer id (#334): the lease lives in that
     printer's own database and its row is keyed by the id.
@@ -166,7 +217,7 @@ def acquire(printer, *, job_json=None, gcode_sha256=None, remote=None, observed_
         if row is not None:
             if row["phase"] == "leased" and not _owner_alive(row):
                 print(f"LAUNCH LEASE RELEASED: an earlier launch stopped before submission ({_describe(row)}).", flush=True)
-            elif row["phase"] != "leased" and row["remote"] and observed_file == row["remote"]:
+            elif row["phase"] != "leased" and reached_printer(row, observed_file, started_files):
                 print(f"LAUNCH RECONCILED: the printer reports {row['remote']}, so the earlier {row['phase']} "
                       "submission reached it. Not resubmitted.", flush=True)
             elif row["phase"] == "leased" or (row["phase"] == "submitting" and _owner_alive(row)):

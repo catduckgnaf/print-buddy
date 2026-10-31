@@ -25,6 +25,21 @@ def screen_type(material):
     return None
 
 
+def label_matches(label, material):
+    """True when a slot's screen label agrees with the Spoolman material loaded there.
+
+    The screen has seven types, so CHANGE_ZCOLOR writes "SILK" for Silk PLA and the
+    printer reports it back that way. A label matches when it is the same family
+    (PLA == PLA+) or is exactly the screen type Print Handy would write for the
+    material (SILK for Silk PLA). It never widens the family check otherwise.
+    """
+    from ....core.printer_state import same_material
+    if same_material(label, material):
+        return True
+    native = re.sub(r"[\s_]+", "", str(label or "").upper())
+    return native in SCREEN_TYPES and native == screen_type(material)
+
+
 def screen_command(slot, material, hex_code):
     from ....hermes.spool_sync import SpoolError, screen_hex
     stype = screen_type(material)

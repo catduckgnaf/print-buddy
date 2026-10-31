@@ -256,3 +256,24 @@ def test_slice_only_then_start_button_lifecycle(env, monkeypatch):
     assert sum(PREP_TEXT in m for m in adapter.log) == 1
     assert not any(m.startswith(PREP_TEXT) and 'Uploading' not in m for m in adapter.log)
     assert any(m.startswith('Print started:') for m in adapter.log)
+
+
+def test_slot_mismatch_refusal_names_the_slot_and_both_labels():
+    tail = ("REFUSED: printer slot 2 is labeled PETG but Spoolman has Silk PLA there (T0). "
+            "Nothing uploaded or started.")
+
+    message = prepared_intake._refusal_text(tail)
+
+    assert message == ("Didn't start: printer slot 2 is labeled PETG but Spoolman has Silk PLA there. "
+                       "Fix the slot on the printer or the spool in Spoolman, then press Retry.")
+def test_uncertain_earlier_start_refusal_names_the_file_and_how_it_clears():
+    tail = ("REFUSED: an earlier start on this printer is uncertain (job /data/archive/bag/JOB.json, "
+            "file Bag-Clip_plate_1.gcode.3mf, since 2026-10-30T19:21:32-0400). Check the printer, then run "
+            "`python3 -m print_handy.core.model_job reconcile-launch --started` or `--not-started`. It is never "
+            "resubmitted automatically. Nothing uploaded or started.")
+
+    message = prepared_intake._refusal_text(tail)
+
+    assert message.startswith("Didn't start: an earlier start (Bag-Clip_plate_1.gcode.3mf) was never confirmed")
+    assert "could not confirm it was ready" not in message and "/data/archive" not in message
+    assert prepared_intake._safe_preupload_refusal(tail)

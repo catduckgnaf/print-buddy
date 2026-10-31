@@ -196,13 +196,17 @@ def infinite_spool_groups(slots):
     for slot_id, slot in slots.items():
         if isinstance(slot_id, bool) or not str(slot_id).isdigit():
             raise RuntimeError('malformed IFS slot id')
-        color = slot.get('hex') or slot.get('color')
+        from print_handy.core.filament_color import first_hex, resolve
         material = slot.get('material')
-        if not isinstance(color, str) or not re.fullmatch(r'#?[0-9A-Fa-f]{6}', color):
-            raise RuntimeError(f'slot {slot_id} has no documented six-digit color')
+        # Any hex form (#RGB, RRGGBBAA) counts; a color name is read through its
+        # name table. Only a slot with no color at all still cannot be grouped:
+        # two unknowns must never look like one color.
+        color, source = resolve({**slot, 'hex': first_hex(slot.get('hex')) or first_hex(slot.get('color'))})
+        if source == 'default':
+            raise RuntimeError(f'slot {slot_id} has no documented color')
         if not isinstance(material, str) or not material.strip():
             raise RuntimeError(f'slot {slot_id} has no documented material type')
-        key = ('#' + color.lstrip('#').upper(), material.strip())
+        key = ('#' + color, material.strip())
         buckets.setdefault(key, []).append(int(slot_id))
     return [{'color': color, 'material': material, 'slots': sorted(members)}
             for (color, material), members in sorted(buckets.items()) if len(members) >= 2]

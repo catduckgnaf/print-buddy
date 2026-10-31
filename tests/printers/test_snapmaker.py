@@ -1,4 +1,7 @@
 """Offline tests for the Snapmaker U1. No printer, network or slicer."""
+import re
+from pathlib import Path
+
 from print_handy import printers
 from print_handy.core.filament_color import normalize_hex
 from print_handy.printers.base import MultiColorUnsupported
@@ -57,6 +60,14 @@ def test_doubled_hash_color_matches_a_plain_hex():
     assert normalize_hex("##aabbcc") == "AABBCC"
     assert normalize_hex("#AABBCC") == normalize_hex("aabbcc")
     assert normalize_hex("#abc") is None
+
+
+def test_sample_console_model_list_matches_the_registry():
+    # The sample console (console/) hardcodes its model list; pin it to the
+    # registry so the sample cannot drift away from the supported models.
+    source = Path(__file__).resolve().parents[2] / "console" / "src" / "lib" / "printers.ts"
+    listed = set(re.findall(r'key: "([a-z0-9._]+)"', source.read_text()))
+    assert listed == set(printers.MODELS)
 
 
 def test_spool_remain_reads_a_present_number_and_ignores_absence():

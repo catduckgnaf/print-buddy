@@ -2,7 +2,10 @@
 
 # Unreleased
 
-Nothing yet.
+- Snapmaker U1 support: the U1 registers as a four-toolhead Moonraker (Klipper-fork) printer (`snapmaker.u1`, `multi_tool`, `filament_slots` stays 1 and `tool_count` is 4, the Prusa XL shape). Bed, height, temperatures and tool count are Snapmaker's published specification and are unverified; no live print has been run. Templates are generic files Print Handy wrote. The U1 joins the vendor-fork treatment for calibration and firmware updates (report-only guidance, never an apply), and the `PRINT_START`/`PRINT_END` macro pair its templates emit is scoped to it in the firmware registry.
+- CI guards: Ruff (syntax and undefined names) runs on the whole Python tree, pip-audit checks both requirement files in a new `dependency-audit` job, and pytest-timeout fails a hung test (120 seconds per test, 600 for corpus cases).
+- Prepared intake imports `plate_merge`, so the full-size split check no longer dies as a swallowed NameError.
+- A sample console lives in `console/`: a non-functional front-end sample whose settings persist only in the browser. It is excluded from the Docker image and is not the Web UI.
 
 # Version 2.2.2
 

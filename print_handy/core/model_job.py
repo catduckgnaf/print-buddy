@@ -2566,6 +2566,27 @@ def _verify_filament_readiness(state, selection=None):
         raise RuntimeError(f"filament readiness unavailable; print refused: {exc}") from exc
 
 
+def _with_gcode_temperatures(state, text):
+    """state with temps_c set to what this G-code's own spool resolves to (printer_state.gcode_temperatures),
+    so a slot job sliced at its spool's temperature is checked against that, not the printer-wide record."""
+    from .orca_config import split_config_list
+    from . import spoolman_client
+    match = re.search(r'^; filament_type = (.+)$', text, re.M)
+    try:
+        materials = split_config_list(match.group(1).strip()) if match else []
+    except ValueError:
+        materials = []
+
+    def fetch(spool_id):
+        record = spoolman_client.get_spool(spool_id, base_url=printer_state.spoolman_url(state))
+        return None if not record or record.get('archived') else record.get('filament')
+    try:
+        temps = printer_state.gcode_temperatures(state, materials, fetch)
+    except (RuntimeError, ValueError) as exc:
+        raise RuntimeError(f"G-code temperature check failed: {exc}") from exc
+    return {**state, 'temps_c': temps}
+
+
 def verify_gcode_offline(gcode_path, state):
     """Check startup, checksum, and bed bounds without contacting the printer.
 
@@ -2581,6 +2602,7 @@ def verify_gcode_offline(gcode_path, state):
     errors = []
     if raw.startswith(b'; MD5:') and not zmod_md5_valid(p):
         errors.append('invalid ZMod MD5 checksum')
+    state = _with_gcode_temperatures(state, text)
     from .nozzle import effective_nozzle_temperature
     nozzle_type = (state.get('nozzle') or {}).get('type') or settings.current().get('printer', {}).get('nozzle_type') or 'hardened_steel'
     try:
@@ -2624,7 +2646,8 @@ def _verify_offline(gcode_path, state):
         _material_temperature_contract(state)
     except RuntimeError as exc:
         raise RuntimeError(f'offline G-code verification failed: {exc}') from exc
-    problems = printers.current().gcode_problems(Path(gcode_path).read_text(errors='ignore'), state)
+    text = Path(gcode_path).read_text(errors='ignore')
+    problems = printers.current().gcode_problems(text, _with_gcode_temperatures(state, text))
     if problems:
         raise RuntimeError('offline G-code verification failed: ' + '; '.join(problems))
     return {'offline': True, 'connection': printers.current().connection}
@@ -2677,6 +2700,7 @@ def verify_gcode(gcode_path):
     native = _native()
     mode = _mr(st, "/printer/objects/query?save_variables")["result"]["status"]["save_variables"]["variables"].get("display_off") if native else None
     nozzle_type = (st.get("nozzle") or {}).get("type") or settings.current().get("printer", {}).get("nozzle_type") or "hardened_steel"
+    st = _with_gcode_temperatures(st, text)
     from .printer_state import _material_temperature_contract
     try:
         _material_temperature_contract(st)
@@ -6210,16 +6234,18 @@ def _print_octoprint(adapter, state, gcode, job, job_path, wait_s, reprint):
     except BaseException:
         lease.release()
         raise
+    # OctoPrint preheats from these, so they are the G-code spool's, resolved before anything is sent.
+    temps = _with_gcode_temperatures(state, Path(gcode).read_text(errors='ignore'))['temps_c']
     # Upload and start are one uncertain step here: the client reports either failure the same way.
     lease.submitting()
     try:
         remote = client.upload(gcode, remote)
         from .nozzle import effective_nozzle_temperature
-        hotend = effective_nozzle_temperature((state.get('nozzle') or {}).get('type', 'hardened_steel'), state['temps_c']['nozzle'])
+        hotend = effective_nozzle_temperature((state.get('nozzle') or {}).get('type', 'hardened_steel'), temps['nozzle'])
         # Claim the start (#460): the family listener must not post a second start for this print.
         try: claim_start_announcement(remote)
         except OSError as e: print(f"WARNING: start announcement claim failed, listener may also post: {e}")
-        client.start(remote, state['temps_c']['bed'], hotend)
+        client.start(remote, temps['bed'], hotend)
     except BaseException as exc:
         lease.uncertain(f'OctoPrint submission did not complete: {exc!r}')
         if isinstance(exc, RuntimeError):

@@ -2444,10 +2444,8 @@ async def prepare_link(event, adapter, state, root, timeout=None, reuse=None, pr
         receipt['status'] = 'START_REQUESTED'
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
         print_no = json.loads(jp.read_text()).get('print_number')
-        total = estimate_text.split(', ', 1)[-1] if actual_estimate is not None else 'estimate after slicing'
-        prep_msg = ' · '.join(['Preparing to start'] + ([f'Print #{print_no}'] if print_no else []) + [total])
-        if slot_lines:
-            prep_msg += '\n' + slot_lines
+        # Just the status: the estimate and slot mapping were on the confirmation the operator just answered.
+        prep_msg = ' · '.join(['Preparing to start'] + ([f'Print #{print_no}'] if print_no else []))
         mj._timing(jp, 'intake_start_tapped')
         receipt['retry_target'] = target
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')

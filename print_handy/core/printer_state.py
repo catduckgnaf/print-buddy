@@ -213,6 +213,63 @@ def resolve_material_temperatures(material, filament, config=None):
     return family, result, sources
 
 
+def slice_temperatures(state, filament=None, fetch_filament=None):
+    """Nozzle/bed targets for slicing the job's selected spool, resolved from that spool.
+
+    The stored temps_c is a printer-wide record: `set --spool` writes it, but slot
+    selection, active-spool sync and Spoolman slot sync change the spool without it.
+    So it is used only when its temperature_resolution names this exact spool and
+    material; otherwise the targets are resolved again from the material defaults, the
+    variant adjustment (#512) and the spool's Spoolman temperatures. ``filament`` is the
+    spool's Spoolman filament when the caller already has it; ``fetch_filament`` is
+    called for it only when needed (Spoolman is advisory: None means defaults).
+    Returns (temps_c, temperature_resolution). Unknown materials raise; no PLA fallback.
+    """
+    spool = state.get("spool") or {}
+    material = spool.get("material")
+    if not material:
+        raise RuntimeError("selected spool has no material; cannot determine safe temperatures")
+    stored, resolution = state.get("temps_c"), state.get("temperature_resolution") or {}
+    if (filament is None and stored and resolution.get("material") == material
+            and resolution.get("spoolman_id") == spool.get("spoolman_id")):
+        return dict(stored), resolution
+    if filament is None and fetch_filament is not None and spool.get("spoolman_id") is not None:
+        try:
+            filament = fetch_filament(spool["spoolman_id"])
+        except Exception:
+            filament = None
+        if filament is not None and not same_material(filament.get("material"), material):
+            filament = None  # a different material on file: the slot record decides, at its defaults
+    family, targets, sources = resolve_material_temperatures(material, filament or {})
+    return ({"nozzle": targets["nozzle"], "bed": targets["bed"]},
+            {"material_family": family, "material": material, "spoolman_id": spool.get("spoolman_id"),
+             "sources": sources,
+             "source": next(iter(set(sources.values()))) if len(set(sources.values())) == 1
+             else "material default / Spoolman filament"})
+
+
+def gcode_temperatures(state, materials, fetch_filament=None):
+    """The temperatures a G-code sliced for ``materials`` (its filament_type list) must carry,
+    resolved for the same spool slice_temperatures used: the active spool when its material is
+    the G-code's, else the one slot spool holding that material, else the material defaults.
+    Mixed labels (a multicolor job) keep the active spool's targets. Two slot spools with that
+    material and different targets are ambiguous and refuse.
+    """
+    labels = {" ".join(str(m).split()) for m in materials or () if str(m).strip()}
+    spool = state.get("spool") or {}
+    if len(labels) != 1 or labels == {" ".join(str(spool.get("material") or "").split())}:
+        return slice_temperatures(state, None, fetch_filament)[0]
+    label = labels.pop()
+    ids = sorted({rec.get("spoolman_id") for rec in (state.get("filament_slots") or {}).values()
+                  if isinstance(rec, dict) and " ".join(str(rec.get("material") or "").split()).casefold()
+                  == label.casefold()}, key=str) or [None]
+    resolved = [slice_temperatures({**state, "spool": {**spool, "spoolman_id": sid, "material": label}},
+                                   None, fetch_filament)[0] for sid in ids]
+    if any(r != resolved[0] for r in resolved):
+        raise RuntimeError(f"slots holding {label} resolve to different temperatures; reslice from one slot")
+    return resolved[0]
+
+
 def _material_temperature_contract(state):
     """Validate selected material temperatures and retain compatibility with old state files."""
     material = (state.get("spool") or {}).get("material")
@@ -758,7 +815,8 @@ def main():
         nozzle_type = (st.get("nozzle") or {}).get("type", "hardened_steel")
         effective_nozzle_temperature(nozzle_type, targets["nozzle"])
         st["temps_c"] = {"nozzle": targets["nozzle"], "bed": targets["bed"]}
-        st["temperature_resolution"] = {"material_family": family, "sources": sources,
+        st["temperature_resolution"] = {"material_family": family, "material": f.get("material"),
+                                         "spoolman_id": a.spool, "sources": sources,
                                          "source": "Spoolman filament" if all(v == "Spoolman filament" for v in sources.values()) else "material default / Spoolman filament" if len(set(sources.values())) > 1 else next(iter(sources.values()), "material default")}
         _get(f"{st['moonraker_url']}/server/spoolman/spool_id", {"spool_id": a.spool}, "POST")
     if a.nozzle is not None or a.nozzle_type is not None:
@@ -830,6 +888,13 @@ def main():
                                   "recorded": datetime.date.today().isoformat()}
     if a.nozzle_temp: st["temps_c"]["nozzle"] = a.nozzle_temp
     if a.bed_temp: st["temps_c"]["bed"] = a.bed_temp
+    if a.nozzle_temp or a.bed_temp:
+        # An explicit temperature holds for this spool only; another spool resolves its own.
+        spool = st.get("spool") or {}
+        st["temperature_resolution"] = {**(st.get("temperature_resolution") or {}),
+                                        "material_family": material_family(spool.get("material")),
+                                        "material": spool.get("material"), "spoolman_id": spool.get("spoolman_id"),
+                                        "source": "operator setting"}
     st["updated"] = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
     save(st)
     print("saved: " + summary(st))

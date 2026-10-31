@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 
+from .. import job_checks
+
 FOREIGN_MARKERS = ("START_PRINT", "CHANGE_ZCOLOR", "LOAD_ZOFFSET", "BED_MESH_CALIBRATE",
                    "BED_MESH_PROFILE", "SAVE_VARIABLE", "project_file")
 
@@ -28,4 +30,6 @@ def gcode_problems(text, adapter, state=None):
         over = [v for v in _numbers(text, command) if v > limit]
         if over:
             problems.append(f"{command} S{max(over):g} exceeds the {name} limit of {limit} C")
+    # The loaded material, installed nozzle and heater targets (job_checks, shared with the other guards).
+    problems += job_checks.recorded_job_problems(text, adapter, state)
     return problems

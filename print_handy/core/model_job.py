@@ -23,7 +23,7 @@ from typing import Any, NamedTuple
 
 from .. import firmware_update, printers, settings
 from ..printers.base import MultiColorUnsupported
-from . import _external, gcode_3mf, launch_state, printer_state, spoolman_client
+from . import _external, filament_color, gcode_3mf, launch_state, printer_state, spoolman_client
 from .site_accounts import SiteLoginNeeded
 
 logger = logging.getLogger(__name__)
@@ -2180,14 +2180,14 @@ def resolve_filament_selection(state, selection):
     selection = validate_filament_selection(selection, spool_optional=unbound, limit=limit)
     if mapped_id is not None and selection["spoolman_id"] != mapped_id:
         raise ValueError(f"slot {slot} spool mismatch: requested #{selection['spoolman_id']}, configured #{mapped_id}")
-    def canonical_color(value):
-        text = value.strip().casefold().lstrip("#")
-        return text.upper() if re.fullmatch(r"[0-9a-fA-F]{6}", text) else " ".join(text.split())
+    def same_selection(key, configured_value, chosen):
+        if key == "color" and filament_color.parse_hex(configured_value) and filament_color.parse_hex(chosen):
+            # Both are hex: #FFF, FFFFFF and FAFAFA are one color, 067749 and 0C6283 are not.
+            return filament_color.compare_colors(configured_value, chosen) == "same"
+        return " ".join(configured_value.strip().casefold().split()) == " ".join(chosen.strip().casefold().split())
     for key in ("color", "material"):
         value = configured.get(key)
-        if value is not None and (not isinstance(value, str) or
-                                   (canonical_color(value) if key == "color" else value.strip().casefold()) !=
-                                   (canonical_color(selection[key]) if key == "color" else selection[key].strip().casefold())):
+        if value is not None and (not isinstance(value, str) or not same_selection(key, value, selection[key])):
             raise ValueError(f"slot {slot} {key} does not match the configured selection")
     return selection
 
@@ -2583,7 +2583,7 @@ def _with_gcode_temperatures(state, text):
         record = spoolman_client.get_spool(spool_id, base_url=printer_state.spoolman_url(state))
         return None if not record or record.get('archived') else record.get('filament')
     try:
-        temps = printer_state.gcode_temperatures(state, materials, fetch)
+        temps = printer_state.gcode_temperatures(state, materials, fetch, text)
     except (RuntimeError, ValueError) as exc:
         raise RuntimeError(f"G-code temperature check failed: {exc}") from exc
     return {**state, 'temps_c': temps}
@@ -6161,6 +6161,32 @@ def _write_checkpoint(checkpoint, data):
         logger.warning('could not write the launch checkpoint %s: %s', checkpoint, exc)
 
 
+def _check_mapped_slot_color(slot, tool, live_raw, expected):
+    """The printer screen's slot color against the recorded one, before a mapped launch.
+
+    The two are compared as colors, not strings (FFFFFF == FAFAFA, 0C6283FF == 0C6283),
+    and only a clear difference between two real hexes refuses. A missing, unreadable
+    or merely close value prints a WARNING and proceeds, and so does a difference from
+    a record hex we guessed ourselves (``hex_source`` name/default): that is our own
+    guess disagreeing with the screen, not the operator's evidence of a wrong spool.
+    """
+    live = filament_color.normalize_hex(live_raw)
+    recorded = filament_color.first_hex(expected.get('hex'))
+    shown_live = f"#{live}" if live else (str(live_raw).strip() if isinstance(live_raw, str) and live_raw.strip() else 'blank')
+    shown_recorded = f"#{recorded}" if recorded else 'no color code'
+    verdict = filament_color.compare_colors(live, recorded)
+    if verdict == 'same':
+        return
+    if verdict == 'different' and expected.get('hex_source') not in filament_color.DERIVED_SOURCES:
+        raise SystemExit(f"REFUSED: printer slot {slot} color is {shown_live} but Spoolman has "
+                         f"{shown_recorded} there (T{tool}). Nothing uploaded or started.")
+    reason = {'unknown': 'the colors could not be compared',
+              'close': 'the colors are close but not identical',
+              'different': 'the recorded color code was worked out from the spool name, not read from Spoolman'}[verdict]
+    print(f"WARNING: printer slot {slot} shows {shown_live} but the record has {shown_recorded} "
+          f"(T{tool}); {reason}, so the launch continues.", flush=True)
+
+
 def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
     """Native explicit mapping route; exactly one SET_ZCOLOR submission, no fallback."""
     adapter = _job_adapter(job)
@@ -6223,10 +6249,7 @@ def print_mapped_native(g, st, mesh, mapping, job, job_path, wait_s, reprint):
         if not label_matches(label, expected['material']):
             raise SystemExit(f"REFUSED: printer slot {slot} is labeled {label or 'blank'} but Spoolman has "
                              f"{expected['material']} there (T{tool}). Nothing uploaded or started.")
-        live_hex = str(matches[0].get('HEX', '')).lstrip('#').upper()
-        if live_hex != expected['hex'].lstrip('#').upper():
-            raise SystemExit(f"REFUSED: printer slot {slot} color is #{live_hex or 'blank'} but Spoolman has "
-                             f"#{expected['hex'].lstrip('#').upper()} there (T{tool}). Nothing uploaded or started.")
+        _check_mapped_slot_color(slot, tool, matches[0].get('HEX'), expected)
         if occupancy.get(slot) is not True:
             # Operator-confirmed loaded feeders supersede idle false occupancy,
             # never unknown telemetry or an actual native error/activity.

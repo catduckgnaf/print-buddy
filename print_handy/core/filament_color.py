@@ -12,9 +12,14 @@ This is the one place that knows how to get a color code:
 * :func:`derive` reads a color name (and its finish words) against a
   named-color table — "matte white" is white, "rose red blue green" is a
   multi-color spool whose representative swatch is its first color;
+* :func:`parse_hex` is the one reader of hex text (``#RGB``, ``RRGGBB``,
+  ``RRGGBBAA``, ``0x`` forms, a comma list) and :func:`same_color` the one
+  judge of whether two codes are the same color (CIE76 distance, so
+  FFFFFF and FAFAFA agree where a string compare would refuse a launch);
 * :func:`resolve` applies the fallback order every reader uses: the slot
-  record's own hex, then Spoolman's ``color_hex``, then the hex the printer
-  reports for the slot (ZMod ``zmod_color``), then the name, and only then
+  record's own hex, then Spoolman's ``color_hex``, then each valid
+  ``multi_color_hexes`` entry, then the hex the printer reports for the slot
+  (ZMod ``zmod_color``), then the name, and only then
   :data:`NEUTRAL_DEFAULT` — which callers must say out loud;
 * :func:`fill_missing_slot_hexes` backfills hardware-record slots that have
   no valid hex, taking the hex the printer already reports for the slot ahead
@@ -26,6 +31,7 @@ This is the one place that knows how to get a color code:
 """
 from __future__ import annotations
 
+import colorsys
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
@@ -55,6 +61,13 @@ _COMPOUND = {
     "light pink": "F8BBD0", "dark red": "8B0000", "fire red": "E53935", "bright red": "E53935",
     "lemon yellow": "FFF44F", "sunflower yellow": "FFC107", "dark purple": "4A148C",
     "light purple": "CE93D8", "olive drab": "6B8E23", "sand brown": "C2B280",
+    "burnt orange": "CC5500", "burnt sienna": "E97451", "peacock blue": "005F69",
+    "electric blue": "0892D0", "midnight blue": "191970", "teal blue": "367588",
+    "steel blue": "4682B4", "dusty blue": "6B8BA4", "blue grey": "607D8B", "blue gray": "607D8B",
+    "baby pink": "F4C2C2", "dusty pink": "D8A7B1", "blood red": "8A0303", "wine red": "722F37",
+    "cherry red": "C21E3A", "lime green": "7CB342", "sage green": "9CAF88", "pine green": "01796F",
+    "emerald green": "2ECC71", "bottle green": "006A4E", "royal purple": "6A1B9A",
+    "off white": "F2EFE6", "snow white": "FFFAFA", "pure white": "FFFFFF", "gun metal": "2A3439",
 }
 
 _SINGLE = {
@@ -71,7 +84,19 @@ _SINGLE = {
     "natural": "F3E9D2", "clear": "F2F2F2", "transparent": "F2F2F2", "translucent": "F2F2F2",
     "wood": "A47551", "charcoal": "36454F", "graphite": "41424C", "slate": "708090", "titanium": "878681",
     "skin": "F1C27D",
+    "salmon": "FA8072", "amber": "FFBF00", "ruby": "9B111E", "emerald": "2ECC71", "sapphire": "0F52BA",
+    "jade": "00A86B", "sage": "9CAF88", "plum": "8E4585", "mustard": "D4A017", "rust": "B7410E",
+    "terracotta": "E2725B", "denim": "1560BD", "azure": "007FFF", "periwinkle": "8E9AF0",
+    "mauve": "B784A7", "taupe": "8B7765", "cocoa": "6F4E37", "walnut": "5D432C", "pewter": "8A9096",
+    "steel": "71797E", "gunmetal": "2A3439", "pine": "01796F", "lemon": "FFF44F", "apricot": "FBCEB1",
+    "cherry": "C21E3A", "wine": "722F37", "orchid": "DA70D6", "tangerine": "F28500",
+    "aquamarine": "7FFFD4", "chartreuse": "7FFF00", "mahogany": "5C2E1F", "espresso": "3C2415",
+    "cinnamon": "A0522D", "caramel": "C68E3F", "honey": "E2A93B",
 }
+
+#: "dark cyan", "light teal": a modifier word shades the color it precedes
+#: (HLS lightness) instead of vanishing, so Dark Cyan is no longer plain Cyan.
+_MODIFIERS = frozenset({"dark", "light", "deep", "pale", "bright"})
 
 #: Multi-color words that name a whole palette.
 _PALETTES = {
@@ -101,27 +126,109 @@ class Guess:
         return len(self.multi_hexes) > 1
 
 
+_HEX_FORM = re.compile(r"(#+|0x)?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})", re.IGNORECASE)
+
+#: CIE76 distance up to which two codes are the same color to a person
+#: (FFFFFF / FAFAFA / EEEEEE), and from which they plainly are not (0C6283
+#: vs 067749 is over 50). Between them is "close, but say so".
+SAME_DELTA_E = 6.0
+DIFFERENT_DELTA_E = 20.0
+
+
+def parse_hex(value: Any) -> tuple[str, int | None] | None:
+    """``(RRGGBB, alpha)`` from any hex text, else None. The one reader of hex.
+
+    Accepts ``#RGB`` (the prefix is required, so words like ``bad`` stay
+    names), ``RRGGBB`` and ``RRGGBBAA`` with an optional ``#`` or ``0x``, any case and surrounding whitespace; a comma list gives its first
+    valid entry. ``alpha`` is 0-255 when the text carried one, else None.
+    Names, empty values and non-strings give None.
+    """
+    if not isinstance(value, str):
+        return None
+    for part in value.split(","):
+        match = _HEX_FORM.fullmatch(part.strip())
+        if not match:
+            continue
+        prefix, digits = match.group(1), match.group(2).upper()
+        if len(digits) == 3:
+            if not prefix:
+                continue  # bare "bad", "fed", "ace" are words, not colors
+            digits = "".join(c * 2 for c in digits)
+        return digits[:6], (int(digits[6:], 16) if len(digits) == 8 else None)
+    return None
+
+
 def normalize_hex(value: Any) -> str | None:
-    """``RRGGBB`` upper-case for a single six-digit hex (``#`` optional), else None.
+    """``RRGGBB`` upper-case for a single hex color (any :func:`parse_hex` form), else None.
 
     A comma list (Spoolman ``multi_color_hexes``) is not one color and
     returns None; use :func:`first_hex` to take its representative.
     """
-    if not isinstance(value, str):
+    if isinstance(value, str) and "," in value:
         return None
-    text = value.strip().lstrip("#").upper()
-    return text if re.fullmatch(r"[0-9A-F]{6}", text) else None
+    parsed = parse_hex(value)
+    return parsed[0] if parsed else None
 
 
 def first_hex(value: Any) -> str | None:
     """The first valid hex of a single value or a comma-separated list."""
-    if not isinstance(value, str):
+    parsed = parse_hex(value)
+    return parsed[0] if parsed else None
+
+
+def _lab(rgb: str) -> tuple[float, float, float]:
+    """CIE L*a*b* (D65) of an ``RRGGBB`` code."""
+    r, g, b = [((c + 0.055) / 1.055) ** 2.4 if c > 0.04045 else c / 12.92
+               for c in (int(rgb[i:i + 2], 16) / 255 for i in (0, 2, 4))]
+    xyz = ((0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047,
+           0.2126729 * r + 0.7151522 * g + 0.0721750 * b,
+           (0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / 1.08883)
+    fx, fy, fz = (v ** (1 / 3) if v > 216 / 24389 else (24389 / 27 * v + 16) / 116 for v in xyz)
+    return 116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)
+
+
+def color_distance(a: Any, b: Any) -> float | None:
+    """CIE76 delta-E between two hex colors, None when either has no parseable hex."""
+    pa, pb = parse_hex(a), parse_hex(b)
+    if pa is None or pb is None:
         return None
-    for part in value.split(","):
-        hx = normalize_hex(part)
-        if hx:
-            return hx
-    return None
+    return sum((x - y) ** 2 for x, y in zip(_lab(pa[0]), _lab(pb[0]))) ** 0.5
+
+
+def compare_colors(a: Any, b: Any) -> str:
+    """``same`` / ``close`` / ``different`` by :data:`SAME_DELTA_E` and
+    :data:`DIFFERENT_DELTA_E`, or ``unknown`` when either side has no hex."""
+    distance = color_distance(a, b)
+    if distance is None:
+        return "unknown"
+    return "same" if distance <= SAME_DELTA_E else "different" if distance >= DIFFERENT_DELTA_E else "close"
+
+
+def same_color(a: Any, b: Any) -> bool | None:
+    """True when two hex colors are the same to the eye, False when clearly not,
+    None when either has no parseable hex or they fall between the thresholds
+    (use :func:`compare_colors` to tell those two apart)."""
+    verdict = compare_colors(a, b)
+    return True if verdict == "same" else False if verdict == "different" else None
+
+
+def _shade(rgb: str, modifier: str) -> str:
+    """``rgb`` made darker/lighter/deeper/paler/brighter by a modifier word."""
+    h, light, sat = colorsys.rgb_to_hls(*(int(rgb[i:i + 2], 16) / 255 for i in (0, 2, 4)))
+    if modifier == "dark":
+        light *= 0.6
+    elif modifier == "light":
+        light += (1 - light) * 0.45
+    elif modifier == "deep":
+        light *= 0.75
+        sat = min(1.0, sat * 1.1)
+    elif modifier == "pale":
+        light += (1 - light) * 0.6
+        sat *= 0.8
+    else:  # bright
+        light = light + (0.55 - light) * 0.4
+        sat = min(1.0, sat * 1.2)
+    return "".join(f"{round(c * 255):02X}" for c in colorsys.hls_to_rgb(h, light, sat))
 
 
 def derive(name: Any, material: Any = None) -> Guess | None:
@@ -145,6 +252,14 @@ def derive(name: Any, material: Any = None) -> Guess | None:
             i += 2
             continue
         word = words[i]
+        if word in _MODIFIERS and i + 1 < len(words):
+            nxt = " ".join(words[i + 1:i + 3])
+            base = _COMPOUND.get(nxt) or _SINGLE.get(words[i + 1])
+            if base:
+                shown = nxt if nxt in _COMPOUND else words[i + 1]
+                found.append((f"{word} {shown}", _shade(base, word)))
+                i += 1 + len(shown.split())
+                continue
         if word in _PALETTES:
             found.extend((word, hx) for hx in _PALETTES[word])
         elif word in _SINGLE:
@@ -166,13 +281,16 @@ def derive_hex(name: Any, material: Any = None) -> str | None:
 
 
 def resolve(record: Mapping[str, Any] | None = None, *, spoolman_hex: Any = None,
-            printer_hex: Any = None, name: Any = None, material: Any = None,
-            prefer_printer: bool = False) -> tuple[str, str]:
+            spoolman_multi: Any = None, printer_hex: Any = None, name: Any = None,
+            material: Any = None, prefer_printer: bool = False,
+            warn_label: str | None = None) -> tuple[str, str]:
     """The color code for one slot and where it came from. Never fails.
 
-    Order: the record's own hex, Spoolman's ``color_hex`` (or the first of
-    its ``multi_color_hexes``), the printer's reported slot hex, the color
-    name, then :data:`NEUTRAL_DEFAULT` with source ``"default"``.
+    Order: the record's own hex, Spoolman's ``color_hex``, the first valid
+    entry of its ``multi_color_hexes`` (an invalid ``color_hex`` never hides
+    a valid list), the printer's reported slot hex, the color name, then
+    :data:`NEUTRAL_DEFAULT` with source ``"default"`` and, when ``warn_label``
+    names the slot, a WARNING line saying so.
     ``prefer_printer`` swaps the middle two, so a hex the printer already
     holds for the slot wins over Spoolman's (the backfill's choice).
     """
@@ -180,7 +298,7 @@ def resolve(record: Mapping[str, Any] | None = None, *, spoolman_hex: Any = None
     own = normalize_hex(record.get("hex"))
     if own:
         return own, "slot"
-    spoolman = first_hex(spoolman_hex) if isinstance(spoolman_hex, str) else None
+    spoolman = first_hex(spoolman_hex) or first_hex(spoolman_multi)
     printer = normalize_hex(printer_hex)
     ranked = ((printer, "printer"), (spoolman, "spoolman")) if prefer_printer \
         else ((spoolman, "spoolman"), (printer, "printer"))
@@ -192,6 +310,9 @@ def resolve(record: Mapping[str, Any] | None = None, *, spoolman_hex: Any = None
         guess = derive(candidate, material)
         if guess:
             return guess.hex, "name"
+    if warn_label:
+        print(f"WARNING: {warn_label} has no color code and none could be worked out; "
+              f"using neutral #{NEUTRAL_DEFAULT} for the preview only", flush=True)
     return NEUTRAL_DEFAULT, "default"
 
 

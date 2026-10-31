@@ -67,17 +67,42 @@ def test_a_brass_nozzle_takes_non_abrasive_labels(label):
 
 # ---------------------------------------------------------------- item 8: nozzle
 
-def test_stock_is_not_stainless_steel():
-    assert normalize_nozzle_type("stock") == "brass"  # unconfirmed stock: refuse abrasives
+def printer_model(monkeypatch, model, nozzle_type=None):
+    from print_handy import settings
+    printer = {"model": model, **({"nozzle_type": nozzle_type} if nozzle_type else {})}
+    monkeypatch.setattr(settings, "current", lambda: {"printer": printer})
+
+
+@pytest.mark.parametrize("model, expected", [("sovol.sv06", "brass"), ("creality.k1", "brass"),
+                                             ("anycubic.kobra2", "brass"), ("flashforge.ad5x", "stainless_steel"),
+                                             ("bambulab.a1", "stainless_steel"), ("no.such.model", "brass")])
+def test_stock_resolves_per_model_and_is_never_a_blanket_stainless(monkeypatch, model, expected):
+    printer_model(monkeypatch, model)
+    assert normalize_nozzle_type("stock") == expected
+
+
+def test_stock_on_a_brass_stock_printer_refuses_abrasive_filament(monkeypatch):
+    printer_model(monkeypatch, "sovol.sv06")
     with pytest.raises(AbrasiveNozzleError):
         check_nozzle_material_safety("stock", "PLA-CF")
+    printer_model(monkeypatch, "sovol.sv06", nozzle_type="hardened_steel")  # the operator says so
+    check_nozzle_material_safety("stock", "PLA-CF")
+
+
+def test_stock_with_unreadable_settings_reads_as_brass(monkeypatch):
+    from print_handy import settings
+
+    def broken():
+        raise RuntimeError("no settings")
+    monkeypatch.setattr(settings, "current", broken)
+    assert normalize_nozzle_type("stock") == "brass"
 
 
 def test_stock_resolves_to_the_model_own_type_when_one_is_known():
     assert nozzle.recorded_nozzle_type("stock", "stainless_steel") == "stainless_steel"
     assert nozzle.recorded_nozzle_type("hardened_steel", "brass") == "hardened_steel"
     assert nozzle.recorded_nozzle_type(None, None) == nozzle.DEFAULT_NOZZLE_TYPE == "hardened_steel"
-    assert normalize_nozzle_type(nozzle.recorded_nozzle_type("stock", None)) == "brass"
+    assert nozzle.recorded_nozzle_type("stock", None) == "stock"  # normalizes per model
 
 
 @pytest.mark.parametrize("model, expected", [("sovol.sv06", "brass"), ("creality.k1", "brass"),
@@ -113,7 +138,8 @@ def test_nozzle_diameter_matches_the_given_supported_sizes_with_tolerance():
         validate_nozzle_setting("0.8mm", "brass", supported_sizes=(0.2, 0.4, 0.6))
 
 
-def test_the_temperature_message_names_the_canonical_nozzle_type():
+def test_the_temperature_message_names_the_canonical_nozzle_type(monkeypatch):
+    printer_model(monkeypatch, "sovol.sv06")
     with pytest.raises(NozzleTemperatureError, match="for brass nozzle"):
         check_nozzle_temperature_safety("stock", 999)
     with pytest.raises(NozzleTemperatureError, match="for hardened steel nozzle"):

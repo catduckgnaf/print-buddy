@@ -179,7 +179,6 @@ PRINTER_ENTRY_ENV_TYPES.update({key: int for key in PRINTER_ENTRY_INT_KEYS})
 PRINTER_ID = re.compile(r"[a-z0-9][a-z0-9_-]*")
 DEFAULT_MATERIAL_TEMPS = {
     "PLA": {"nozzle": 210, "bed": 60}, "PETG": {"nozzle": 240, "bed": 85},
-    "PCTG": {"nozzle": 250, "bed": 80},
     "ABS": {"nozzle": 245, "bed": 100}, "ASA": {"nozzle": 260, "bed": 105},
     "TPU": {"nozzle": 230, "bed": 50}, "PA": {"nozzle": 260, "bed": 90},
     "PC": {"nozzle": 275, "bed": 110},

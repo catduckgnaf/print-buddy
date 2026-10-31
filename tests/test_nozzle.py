@@ -27,9 +27,7 @@ def test_normalize_nozzle_type_canonical():
     assert normalize_nozzle_type("hardened_steel") == "hardened_steel"
     assert normalize_nozzle_type("hardened steel") == "hardened_steel"
     assert normalize_nozzle_type("Hardened-Steel") == "hardened_steel"
-    # "stock" is an unconfirmed factory nozzle, not stainless steel: it reads as the softest type
-    # (brass) so abrasive filament is refused until the real nozzle is recorded.
-    assert normalize_nozzle_type("stock") == "brass"
+    # "stock" is no longer a fixed alias: it resolves per model (tests/test_material_hardening.py).
     assert normalize_nozzle_type("ruby") == "ruby"
     assert normalize_nozzle_type("ruby tipped") == "ruby"
     assert normalize_nozzle_type("tungsten carbide") == "tungsten_carbide"

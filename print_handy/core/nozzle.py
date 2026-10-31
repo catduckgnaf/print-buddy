@@ -297,9 +297,9 @@ def normalize_nozzle_type(raw: str) -> str:
     cleaned = raw.strip().lower().replace("-", "_")
     if cleaned == "stock":
         # The seeded "stock" record says only that the factory nozzle is fitted, not what it is.
-        # Without the model's own stock type (see recorded_nozzle_type) assume the softest option,
-        # brass, so abrasive filament is refused rather than waved through as stainless.
-        return "brass"
+        # Resolve it per model; with no model to ask, assume the softest option, brass, so abrasive
+        # filament is refused rather than waved through as stainless.
+        return normalize_nozzle_type(_model_stock_type() or "brass")
     # Also support space-separated variants
     if cleaned in NOZZLE_TYPE_ALIASES:
         return NOZZLE_TYPE_ALIASES[cleaned]
@@ -310,11 +310,36 @@ def normalize_nozzle_type(raw: str) -> str:
     raise NozzleError(f"unknown nozzle type {raw!r}; expected one of: {valid}")
 
 
+_RESOLVING_STOCK = False
+
+
+def _model_stock_type() -> str | None:
+    """The configured printer's own factory nozzle type: its [printer] nozzle_type, else brass when
+    the model lists brass among its nozzles, else its first listed type. None when unknown."""
+    global _RESOLVING_STOCK
+    if _RESOLVING_STOCK:  # settings validation normalizes types while loading
+        return None
+    _RESOLVING_STOCK = True
+    try:
+        from .. import printers, settings
+        printer = settings.current().get("printer") or {}
+        declared = printer.get("nozzle_type")
+        if isinstance(declared, str) and declared.strip().lower() != "stock":
+            return declared
+        model = printers.MODELS.get(printer.get("model"))
+        types = tuple(model.supported_nozzle_types) if model else ()
+        return ("brass" if "brass" in types else types[0]) if types else None
+    except Exception:
+        return None
+    finally:
+        _RESOLVING_STOCK = False
+
+
 def recorded_nozzle_type(recorded: str | None, model_default: str | None = None) -> str:
     """The raw nozzle type to use for a hardware record's ``nozzle.type``.
 
-    A recorded type wins; "stock" (an unconfirmed factory nozzle) resolves to the model's own
-    stock/configured type when one is known, else normalizes to brass (the conservative reading).
+    A recorded type wins; "stock" (an unconfirmed factory nozzle) resolves to the given model default
+    when there is one, else stays "stock" and normalizes per model (normalize_nozzle_type).
     No record at all uses the model default, then DEFAULT_NOZZLE_TYPE.
     """
     raw = recorded.strip() if isinstance(recorded, str) else ""

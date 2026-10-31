@@ -75,6 +75,25 @@ def test_t0_single_color_plate_uses_explicit_physical_slot_not_project_material_
         contract.validate_materials(text, 'PETG;PLA;PLA', st, {'0': 4})
 
 
+def test_quoted_material_with_a_space_is_valid():
+    """2026-10-30 22:46: a single-color slice on a 'Silk PLA' spool failed with
+    'malformed per-tool filament_type metadata' because Orca writes the name as
+    `"Silk PLA"`; the quote is slicer syntax, not part of the material."""
+    st = state()
+    st['filament_slots']['2']['material'] = 'Silk PLA'
+    text = artifact(1).replace('; filament_type = PLA', '; filament_type = "Silk PLA"')
+    assert contract.validate_materials(text, '"Silk PLA"', st, {'0': 2}) == {'0': 2}
+    text = artifact(2)
+    assert contract.validate_materials(text, 'PLA;"Silk PLA"', st, {'0': 1, '1': 2}) == {'0': 1, '1': 2}
+
+
+@pytest.mark.parametrize('material', ['"Silk PLA', 'PLA;;PLA', 'PL$A', '""'])
+def test_malformed_material_metadata_is_still_refused(material):
+    st = state()
+    with pytest.raises(RuntimeError, match='malformed per-tool filament_type metadata'):
+        contract.validate_materials(artifact(1), material, st, {'0': 1})
+
+
 def test_multicolor_explicit_map_still_checks_each_tool_material():
     st = state()
     text = artifact(2)

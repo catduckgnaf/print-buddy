@@ -76,8 +76,12 @@ def embedded_mapping(text, state):
 def validate_materials(text, material, state, mapping=None):
     if not isinstance(material, str) or not material.strip():
         raise RuntimeError('missing filament_type metadata')
-    materials = [item.strip() for item in material.split(';')]
-    if any(not re.fullmatch(r'[A-Za-z0-9_+ .-]+', item) for item in materials):
+    from ....core.orca_config import split_config_list
+    try:
+        materials = [item.strip() for item in split_config_list(material)]
+    except ValueError as exc:
+        raise RuntimeError('malformed per-tool filament_type metadata') from exc
+    if any(not re.fullmatch(r'[A-Za-z0-9_+ .()-]+', item) for item in materials):
         raise RuntimeError('malformed per-tool filament_type metadata')
     tools = used_tools(text)
     if mapping is None:

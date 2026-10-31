@@ -64,7 +64,11 @@ def requirements_from_gcode(text):
     not assign an extruder gets None and is matched on material alone.
     """
     raw_types = _config(text, "filament_type")
-    types = [t.strip() for t in raw_types.split(";")] if raw_types else []
+    from ...core.orca_config import split_config_list
+    try:
+        types = [t.strip() for t in split_config_list(raw_types)] if raw_types else []
+    except ValueError:
+        types = []
     raw_extruders = _config(text, "filament_extruder_id")
     extruders = []
     if raw_extruders:

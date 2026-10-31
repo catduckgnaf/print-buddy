@@ -131,6 +131,15 @@ def vendor_block_problems(block, patterns, what):
     return problems
 
 
+def _materials(text):
+    """The filament_type per slot, unquoted (Orca quotes names with spaces)."""
+    from ...core.orca_config import split_config_list
+    try:
+        return [t.strip() for t in split_config_list(_config(text, "filament_type")) if t.strip()]
+    except ValueError:
+        return []
+
+
 def _settings_ids(text):
     """The filament profile names a sliced file says it used, one per filament slot, or None.
 
@@ -189,7 +198,7 @@ def gcode_problems(text, adapter, *, state=None):
     else:
         prelude, body, epilogue = split
         settings_ids = _settings_ids(text)
-        declared_types = [t.strip() for t in (_config(text, "filament_type") or "").split(";") if t.strip()]
+        declared_types = _materials(text)
         try:
             if settings_ids is None:
                 raise profiles.ProfileError(f"G-code must name exactly one filament_settings_id, got "
@@ -270,7 +279,7 @@ def gcode_problems(text, adapter, *, state=None):
         nozzle_type = None
     if nozzle_type is not None and nozzle_type not in nozzle_types:
         problems.append(f"nozzle type {nozzle_type} is not a {name} hotend option ({', '.join(nozzle_types)})")
-    materials = [t.strip() for t in (_config(text, "filament_type") or "").split(";") if t.strip()]
+    materials = _materials(text)
     if not materials:
         problems.append(f"G-code must name a filament_type for every filament slot, got "
                         f"{_config(text, 'filament_type')!r}")

@@ -102,7 +102,11 @@ def _header_list(text, key):
     match = re.search(rf"^; {re.escape(key)} = (.+)$", text, re.M)
     if not match:
         return []
-    return [item.strip() for item in match.group(1).split(";")]
+    from .orca_config import split_config_list
+    try:
+        return [item.strip() for item in split_config_list(match.group(1))]
+    except ValueError:
+        return []
 
 
 def _header_seconds(text):

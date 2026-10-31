@@ -67,3 +67,26 @@ def test_unknown_and_missing_material_fail_closed():
 def test_invalid_spoolman_target_rejected():
     with pytest.raises(ValueError, match="Invalid nozzle temperature"):
         printer_state.resolve_material_temperatures("PLA", {"settings_extruder_temp": 0}, config={})
+
+
+@pytest.mark.parametrize("material, family, variant, nozzle", [
+    # Real-world labels with extra finish or speed words (2026-10-30 audit).
+    ("Shiny Silk PLA", "PLA", "SILK PLA", 220),
+    ("PLA (Silk)", "PLA", "SILK PLA", 220),
+    ("PLA Basic", "PLA", None, 210),
+    # Labels the original rules already resolved keep their exact result.
+    ("Silk PLA", "PLA", "SILK PLA", 220),
+    ("PLA+", "PLA", "PLA+", 215),
+    ("Matte PLA", "PLA", "MATTE PLA", 215),
+    ("PLA-CF", "PLA-CF", "PLA-CF", 215),
+])
+def test_finish_words_resolve_to_the_family_with_its_variant_temperature(material, family, variant, nozzle):
+    resolved, temps, _ = printer_state.resolve_material_temperatures(material, {}, {"material_temps": {}})
+    assert resolved == family and temps["nozzle"] == nozzle
+    assert printer_state.material_variant(material) == variant
+
+
+@pytest.mark.parametrize("material", ["PLA/PHA", "PLA Glow", "NoPLA+", "Wood", "High Speed PLA", "PETG HF"])
+def test_blends_abrasives_and_unknown_names_stay_refused(material):
+    with pytest.raises(ValueError, match="Unsupported filament material"):
+        printer_state.resolve_material_temperatures(material, {}, {"material_temps": {}})
